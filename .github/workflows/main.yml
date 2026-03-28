@@ -17,7 +17,7 @@ jobs:
         with:
           fetch-depth: 0
 
-      # 1. 自动计算版本号
+      # 1. 计算新版本号
       - name: Determine Next Version
         id: next_version
         run: |
@@ -26,9 +26,16 @@ jobs:
           FIX=$(echo $LATEST_TAG | cut -d. -f3)
           NEXT_FIX=$((FIX + 1))
           NEXT_TAG="$BASE.$NEXT_FIX"
+          # 去掉前面的 'v'，只要数字部分给 Buildozer
+          PURE_VERSION=$(echo $NEXT_TAG | sed 's/v//')
           echo "tag=$NEXT_TAG" >> $GITHUB_OUTPUT
+          echo "pure_version=$PURE_VERSION" >> $GITHUB_OUTPUT
 
-      # 2. 安装 Python 环境和 Buildozer 依赖
+      # 2. 直接改写 buildozer.spec 里的版本号 (解决你遇到的报错)
+      - name: Update Version in Spec
+        run: |
+          sed -i "s/^version =.*/version = ${{ steps.next_version.outputs.pure_version }}/" buildozer.spec
+
       - name: Set up Python
         uses: actions/setup-python@v4
         with:
@@ -37,10 +44,10 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential libffi-dev git zip unzip zlib1g-dev libltdl-dev libgmp-dev libltdl-dev libssl-dev
+          sudo apt-get install -y build-essential libffi-dev git zip unzip zlib1g-dev libltdl-dev libgmp-dev libssl-dev cmake
           pip install --user --upgrade buildozer Cython==0.29.33 virtualenv
 
-      # 3. 恢复/生成签名
+      # 3. 签名缓存
       - name: Restore Keystore Cache
         id: cache-keystore
         uses: actions/cache@v3
@@ -55,18 +62,18 @@ jobs:
           -storepass "permanent_password_123" -keypass "permanent_password_123" \
           -dname "CN=UnraidApp" -keyalg RSA -keysize 2048 -validity 10000
 
-      # 4. 正式打包 (直接运行 buildozer)
+      # 4. 打包
       - name: Build APK
         run: |
           export PATH=$PATH:$HOME/.local/bin
-          buildozer android release
+          # 直接运行，不再通过环境变量传 VERSION，因为我们已经用 sed 改了文件
+          yes | buildozer android release
         env:
-          VERSION: ${{ steps.next_version.outputs.tag }}
           ANDROID_KEYSTORE_PASSWORD: "permanent_password_123"
           ANDROID_KEY_ALIAS: "unraid_alias"
           ANDROID_KEY_PASSWORD: "permanent_password_123"
 
-      # 5. 发布 Release
+      # 5. 发布
       - name: Create Release
         uses: softprops/action-gh-release@v1
         with:
