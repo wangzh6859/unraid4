@@ -13,11 +13,11 @@ jobs:
 
     steps:
       - name: Checkout Code
-        uses: actions/checkout@v4 # 升级到最新版 checkout
+        uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      # 1. 自动计算下一个版本号
+      # 1. 自动计算版本号
       - name: Determine Next Version
         id: next_version
         run: |
@@ -28,7 +28,19 @@ jobs:
           NEXT_TAG="$BASE.$NEXT_FIX"
           echo "tag=$NEXT_TAG" >> $GITHUB_OUTPUT
 
-      # 2. 恢复或生成签名文件
+      # 2. 安装 Python 环境和 Buildozer 依赖
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential libffi-dev git zip unzip zlib1g-dev libltdl-dev libgmp-dev libltdl-dev libssl-dev
+          pip install --user --upgrade buildozer Cython==0.29.33 virtualenv
+
+      # 3. 恢复/生成签名
       - name: Restore Keystore Cache
         id: cache-keystore
         uses: actions/cache@v3
@@ -43,27 +55,23 @@ jobs:
           -storepass "permanent_password_123" -keypass "permanent_password_123" \
           -dname "CN=UnraidApp" -keyalg RSA -keysize 2048 -validity 10000
 
-      # 3. 使用目前最可靠的 buildozer-action
-      - name: Build with Buildozer
-        uses: GearSnd/buildozer-action@v2
-        with:
-          buildozer_version: master
-          command: buildozer android release
+      # 4. 正式打包 (直接运行 buildozer)
+      - name: Build APK
+        run: |
+          export PATH=$PATH:$HOME/.local/bin
+          buildozer android release
         env:
           VERSION: ${{ steps.next_version.outputs.tag }}
           ANDROID_KEYSTORE_PASSWORD: "permanent_password_123"
           ANDROID_KEY_ALIAS: "unraid_alias"
           ANDROID_KEY_PASSWORD: "permanent_password_123"
 
-      # 4. 创建 Release
+      # 5. 发布 Release
       - name: Create Release
         uses: softprops/action-gh-release@v1
         with:
           files: bin/*.apk
           tag_name: ${{ steps.next_version.outputs.tag }}
           name: Release ${{ steps.next_version.outputs.tag }}
-          body: |
-            自动构建更新
-            版本号: ${{ steps.next_version.outputs.tag }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
