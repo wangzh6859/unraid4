@@ -17,7 +17,7 @@ jobs:
         with:
           fetch-depth: 0
 
-      # 1. 计算新版本号
+      # 1. 计算版本号
       - name: Determine Next Version
         id: next_version
         run: |
@@ -26,12 +26,11 @@ jobs:
           FIX=$(echo $LATEST_TAG | cut -d. -f3)
           NEXT_FIX=$((FIX + 1))
           NEXT_TAG="$BASE.$NEXT_FIX"
-          # 去掉前面的 'v'，只要数字部分给 Buildozer
           PURE_VERSION=$(echo $NEXT_TAG | sed 's/v//')
           echo "tag=$NEXT_TAG" >> $GITHUB_OUTPUT
           echo "pure_version=$PURE_VERSION" >> $GITHUB_OUTPUT
 
-      # 2. 直接改写 buildozer.spec 里的版本号 (解决你遇到的报错)
+      # 2. 强制修改 buildozer.spec 里的版本号
       - name: Update Version in Spec
         run: |
           sed -i "s/^version =.*/version = ${{ steps.next_version.outputs.pure_version }}/" buildozer.spec
@@ -41,13 +40,14 @@ jobs:
         with:
           python-version: '3.10'
 
+      # 3. 安装环境依赖
       - name: Install dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y build-essential libffi-dev git zip unzip zlib1g-dev libltdl-dev libgmp-dev libssl-dev cmake
           pip install --user --upgrade buildozer Cython==0.29.33 virtualenv
 
-      # 3. 签名缓存
+      # 4. 恢复或生成固定签名 (由 Cache 保证唯一性)
       - name: Restore Keystore Cache
         id: cache-keystore
         uses: actions/cache@v3
@@ -62,32 +62,36 @@ jobs:
           -storepass "permanent_password_123" -keypass "permanent_password_123" \
           -dname "CN=UnraidApp" -keyalg RSA -keysize 2048 -validity 10000
 
-      # 4. 打包
+      # 5. 打包 APK
       - name: Build APK
         run: |
           export PATH=$PATH:$HOME/.local/bin
-          # 直接运行，不再通过环境变量传 VERSION，因为我们已经用 sed 改了文件
+          # 使用 yes 自动跳过所有许可确认
           yes | buildozer android release
         env:
           ANDROID_KEYSTORE_PASSWORD: "permanent_password_123"
           ANDROID_KEY_ALIAS: "unraid_alias"
           ANDROID_KEY_PASSWORD: "permanent_password_123"
 
-      # 5. 发布 Release (修正版)
+      # 6. 调试步骤：列出 bin 目录，确保文件真的存在
+      - name: List Output Files
+        run: |
+          echo "--- 检查生成的 APK 文件 ---"
+          ls -R bin/
+
+      # 7. 发布 Release 并上传所有 APK 资产
       - name: Create Release
         uses: softprops/action-gh-release@v1
         with:
-          # 修改这里：使用更强的通配符匹配 bin 目录下所有的 .apk 文件
-          files: |
-            bin/*.apk
+          # 修正后的匹配规则：递归查找 bin 下所有 apk
+          files: bin/*.apk
           tag_name: ${{ steps.next_version.outputs.tag }}
           name: Release ${{ steps.next_version.outputs.tag }}
           body: |
-            自动构建更新
+            自动构建成功
             版本号: ${{ steps.next_version.outputs.tag }}
           draft: false
           prerelease: false
-          # 增加这个配置：如果没有找到 apk，让 Action 报错，方便我们排查
-          fail_on_unmatched_files: true 
+          fail_on_unmatched_files: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
