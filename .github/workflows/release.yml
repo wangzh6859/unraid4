@@ -21,8 +21,10 @@ jobs:
           java-version: '17'
           distribution: 'temurin'
 
-      - name: 设置 Gradle 环境
-        uses: gradle/gradle-build-action@v3
+      - name: 设置 Gradle 环境并明确指定兼容版本
+        uses: gradle/actions/setup-gradle@v3
+        with:
+          gradle-version: '8.4' # 🌟 强制使用与项目兼容的 Gradle 8.4 版本
 
       - name: 编译并签名 Release 版 APK
         run: gradle :app:assembleRelease
