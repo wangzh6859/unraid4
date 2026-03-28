@@ -15,14 +15,19 @@ jobs:
         with:
           node-version: 18
 
+      # 【新增】设置 Java 17 环境，这是编译现代安卓 App 的基础
+      - name: Setup Java
+        uses: actions/setup-java@v3
+        with:
+          distribution: 'zulu'
+          java-version: '17'
+
       - name: Install Dependencies
         run: npm install
 
-      # 【新增】让云端全自动为你生成 Android 底层打包目录，你本地完全不用管！
       - name: Generate Native Code (Prebuild)
         run: npx expo prebuild --platform android --clean --no-install
 
-      # 自动增加版本号脚本
       - name: Bump Version
         run: npm version patch --no-git-tag-version
 
@@ -38,6 +43,9 @@ jobs:
           alias: ${{ secrets.ANDROID_ALIAS }}
           keyStorePassword: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
           keyPassword: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        # 【关键修复】通过环境变量强制指定构建工具版本
+        env:
+          BUILD_TOOLS_VERSION: "34.0.0"
 
       - name: Upload to Releases
         uses: softprops/action-gh-release@v1
