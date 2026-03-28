@@ -1,0 +1,14 @@
+{
+  "expo": {
+    "name": "Unraid Manager",
+    "slug": "unraid-manager",
+    "version": "1.0.0",
+    "android": {
+      "package": "com.yourname.unraidmanager",
+      "versionCode": 1,
+      "adaptiveIcon": {
+        "backgroundColor": "#ffffff"
+      }
+    }
+  }
+}
