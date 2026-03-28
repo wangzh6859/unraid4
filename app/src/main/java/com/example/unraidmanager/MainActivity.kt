@@ -1,5 +1,6 @@
 package com.example.unraidmanager
 
+import android.content.Context
 import android.graphics.Color
 import android.os.Bundle
 import android.view.Gravity
@@ -35,7 +36,7 @@ class MainActivity : AppCompatActivity() {
                 .commit()
         }
 
-        // 监听底部导航栏的点击事件，切换不同的页面
+        // 监听底部导航栏的点击事件
         bottomNav.setOnItemSelectedListener { item ->
             val selectedFragment: Fragment = when (item.itemId) {
                 R.id.nav_home -> HomeFragment()
@@ -56,7 +57,6 @@ class MainActivity : AppCompatActivity() {
 // 首页逻辑
 // ==========================================
 class HomeFragment : Fragment() {
-    // 删除了原来写死的配置，改为稍后动态读取
     private var host = ""
     private var user = ""
     private var password = ""
@@ -68,7 +68,7 @@ class HomeFragment : Fragment() {
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
         
-        // 🌟 从本地配置中读取账号密码
+        // 🌟 这里是上次报错的根源，现在顶部已经正确导入了 Context
         val sharedPref = requireActivity().getSharedPreferences("UnraidPrefs", Context.MODE_PRIVATE)
         host = sharedPref.getString("HOST", "") ?: ""
         user = sharedPref.getString("USER", "") ?: ""
@@ -134,13 +134,13 @@ class HomeFragment : Fragment() {
 
             output
         } catch (e: Exception) {
-            "Error"
+            "Error: ${e.message}"
         }
     }
 }
 
 // ==========================================
-// 占位页面 (用于文件、影音、设置页面的临时展示)
+// 占位页面
 // ==========================================
 class PlaceholderFragment(private val text: String) : Fragment() {
     override fun onCreateView(inflater: LayoutInflater, container: ViewGroup?, savedInstanceState: Bundle?): View {
