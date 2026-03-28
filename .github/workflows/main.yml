@@ -40,14 +40,14 @@ jobs:
         with:
           python-version: '3.10'
 
-      # 3. 安装环境依赖
+      # 3. 安装环境依赖（补全了所有可能的缺失库）
       - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential libffi-dev git zip unzip zlib1g-dev libltdl-dev libgmp-dev libssl-dev cmake
+          sudo apt-get install -y build-essential libffi-dev git zip unzip zlib1g-dev libltdl-dev libgmp-dev libssl-dev cmake libsqlite3-dev tk-dev libgdbm-dev libc6-dev libbz2-dev
           pip install --user --upgrade buildozer Cython==0.29.33 virtualenv
 
-      # 4. 恢复或生成固定签名 (由 Cache 保证唯一性)
+      # 4. 恢复或生成固定签名
       - name: Restore Keystore Cache
         id: cache-keystore
         uses: actions/cache@v3
@@ -62,29 +62,33 @@ jobs:
           -storepass "permanent_password_123" -keypass "permanent_password_123" \
           -dname "CN=UnraidApp" -keyalg RSA -keysize 2048 -validity 10000
 
-      # 5. 打包 APK
+      # 5. 打包 APK（核心：增加编译失败检测）
       - name: Build APK
         run: |
           export PATH=$PATH:$HOME/.local/bin
-          # 使用 yes 自动跳过所有许可确认
-          yes | buildozer android release
+          # 如果 buildozer 运行失败，立即退出并报错
+          yes | buildozer android release || (echo "Buildozer 编译失败！" && exit 1)
+          
+          # 暴力搜索生成的 APK 并统一移动到当前目录下的 output 文件夹
+          mkdir -p ./output_apk
+          find . -name "*.apk" -exec cp {} ./output_apk/ \;
+          
+          # 检查是否真的拿到了 APK
+          if [ -z "$(ls -A ./output_apk)" ]; then
+            echo "错误：未在任何地方找到生成的 APK 文件！"
+            exit 1
+          fi
         env:
           ANDROID_KEYSTORE_PASSWORD: "permanent_password_123"
           ANDROID_KEY_ALIAS: "unraid_alias"
           ANDROID_KEY_PASSWORD: "permanent_password_123"
 
-      # 6. 调试步骤：列出 bin 目录，确保文件真的存在
-      - name: List Output Files
-        run: |
-          echo "--- 检查生成的 APK 文件 ---"
-          ls -R bin/
-
-      # 7. 发布 Release 并上传所有 APK 资产
+      # 6. 发布 Release
       - name: Create Release
         uses: softprops/action-gh-release@v1
         with:
-          # 修正后的匹配规则：递归查找 bin 下所有 apk
-          files: bin/*.apk
+          # 指向我们刚才暴力搜索出来的目录
+          files: output_apk/*.apk
           tag_name: ${{ steps.next_version.outputs.tag }}
           name: Release ${{ steps.next_version.outputs.tag }}
           body: |
