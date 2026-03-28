@@ -27,7 +27,7 @@ jobs:
           gradle-version: '8.4' # 🌟 强制使用与项目兼容的 Gradle 8.4 版本
 
       - name: 编译并签名 Release 版 APK
-        run: gradle :app:assembleRelease
+        run: gradle :app:assembleRelease --stacktrace
 
       - name: 创建 GitHub Release 并发布
         uses: softprops/action-gh-release@v2
