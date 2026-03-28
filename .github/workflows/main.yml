@@ -3,46 +3,38 @@ name: Auto Build and Release APK
 on:
   push:
     branches:
-      - main  # 监听 main 分支的推送，点击“同步更改”即触发
+      - main
 
 jobs:
   build:
     runs-on: ubuntu-latest
     permissions:
-      contents: write  # 赋予 Action 写入 Release 和 Tag 的权限
+      contents: write
 
     steps:
       - name: Checkout Code
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4 # 升级到最新版 checkout
         with:
-          fetch-depth: 0 # 获取所有历史记录以计算版本号
+          fetch-depth: 0
 
-      # 1. 自动计算下一个版本号 (基于 Git Tag)
+      # 1. 自动计算下一个版本号
       - name: Determine Next Version
         id: next_version
         run: |
-          # 获取最新的 tag，如果没有则默认为 v1.0.0
           LATEST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "v1.0.0")
-          echo "Current Version: $LATEST_TAG"
-          
-          # 拆分版本号 (例如 v1.0.5 -> 1, 0, 5)
           BASE=$(echo $LATEST_TAG | cut -d. -f1,2)
           FIX=$(echo $LATEST_TAG | cut -d. -f3)
-          
-          # 末尾数字加 1
           NEXT_FIX=$((FIX + 1))
           NEXT_TAG="$BASE.$NEXT_FIX"
-          
-          echo "Next Version: $NEXT_TAG"
           echo "tag=$NEXT_TAG" >> $GITHUB_OUTPUT
 
-      # 2. 恢复或生成固定的签名文件 (Keystore)
+      # 2. 恢复或生成签名文件
       - name: Restore Keystore Cache
         id: cache-keystore
         uses: actions/cache@v3
         with:
           path: my.keystore
-          key: keystore-fixed-v1 # 只要 key 不变，签名文件就永远固定
+          key: keystore-fixed-v1
 
       - name: Generate Keystore if not exists
         if: steps.cache-keystore.outputs.cache-hit != 'true'
@@ -51,9 +43,9 @@ jobs:
           -storepass "permanent_password_123" -keypass "permanent_password_123" \
           -dname "CN=UnraidApp" -keyalg RSA -keysize 2048 -validity 10000
 
-      # 3. 使用 Buildozer 编译 APK
+      # 3. 使用目前最可靠的 buildozer-action
       - name: Build with Buildozer
-        uses: ArtemSerebrennkov/buildozer-action@v1
+        uses: GearSnd/buildozer-action@v2
         with:
           buildozer_version: master
           command: buildozer android release
@@ -63,7 +55,7 @@ jobs:
           ANDROID_KEY_ALIAS: "unraid_alias"
           ANDROID_KEY_PASSWORD: "permanent_password_123"
 
-      # 4. 自动创建 GitHub Release 并上传 APK
+      # 4. 创建 Release
       - name: Create Release
         uses: softprops/action-gh-release@v1
         with:
@@ -73,8 +65,5 @@ jobs:
           body: |
             自动构建更新
             版本号: ${{ steps.next_version.outputs.tag }}
-            构建时间: ${{ github.event.head_commit.timestamp }}
-          draft: false
-          prerelease: false
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
