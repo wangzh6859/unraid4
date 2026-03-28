@@ -15,7 +15,6 @@ jobs:
         with:
           node-version: 18
 
-      # 【新增】设置 Java 17 环境，这是编译现代安卓 App 的基础
       - name: Setup Java
         uses: actions/setup-java@v3
         with:
@@ -28,8 +27,17 @@ jobs:
       - name: Generate Native Code (Prebuild)
         run: npx expo prebuild --platform android --clean --no-install
 
-      - name: Bump Version
-        run: npm version patch --no-git-tag-version
+      # 【新增】自动精准修改 app.json 里的安卓版本号，保证完美覆盖安装
+      - name: Auto Bump Version Code
+        run: |
+          node -e "
+            const fs = require('fs');
+            const data = JSON.parse(fs.readFileSync('app.json'));
+            data.expo.android.versionCode = ${{ github.run_number }};
+            data.expo.version = '1.0.${{ github.run_number }}';
+            fs.writeFileSync('app.json', JSON.stringify(data, null, 2));
+            console.log('✅ 版本号已自动更新为: v' + data.expo.version + ' (Code: ' + data.expo.android.versionCode + ')');
+          "
 
       - name: Build Android Release
         run: cd android && ./gradlew assembleRelease
@@ -43,7 +51,6 @@ jobs:
           alias: ${{ secrets.ANDROID_ALIAS }}
           keyStorePassword: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
           keyPassword: ${{ secrets.ANDROID_KEY_PASSWORD }}
-        # 【关键修复】通过环境变量强制指定构建工具版本
         env:
           BUILD_TOOLS_VERSION: "34.0.0"
 
@@ -51,6 +58,6 @@ jobs:
         uses: softprops/action-gh-release@v1
         with:
           files: ${{ steps.sign_app.outputs.signedReleaseFile }}
-          tag_name: v${{ github.run_number }}
+          tag_name: v1.0.${{ github.run_number }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
