@@ -86,8 +86,22 @@
                             android:layout_height="match_parent"
                             android:gravity="center"
                             android:orientation="vertical">
-                            <TextView android:text="CPU 负载" android:textColor="#999999" android:textSize="12sp"/>
-                            <TextView android:id="@+id/tvCpu" android:text="--%" android:textColor="#2196F3" android:textSize="20sp" android:textStyle="bold" android:layout_marginTop="4dp"/>
+                            
+                            <TextView
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:text="CPU 负载"
+                                android:textColor="#999999"
+                                android:textSize="12sp"/>
+                            <TextView
+                                android:id="@+id/tvCpu"
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:text="--%"
+                                android:textColor="#2196F3"
+                                android:textSize="20sp"
+                                android:textStyle="bold"
+                                android:layout_marginTop="4dp"/>
                         </LinearLayout>
                     </com.google.android.material.card.MaterialCardView>
 
@@ -104,8 +118,21 @@
                             android:layout_height="match_parent"
                             android:gravity="center"
                             android:orientation="vertical">
-                            <TextView android:text="GPU 负载" android:textColor="#999999" android:textSize="12sp"/>
-                            <TextView android:text="0%" android:textColor="#9C27B0" android:textSize="20sp" android:textStyle="bold" android:layout_marginTop="4dp"/>
+                            
+                            <TextView
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:text="GPU 负载"
+                                android:textColor="#999999"
+                                android:textSize="12sp"/>
+                            <TextView
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:text="0%"
+                                android:textColor="#9C27B0"
+                                android:textSize="20sp"
+                                android:textStyle="bold"
+                                android:layout_marginTop="4dp"/>
                         </LinearLayout>
                     </com.google.android.material.card.MaterialCardView>
                 </LinearLayout>
@@ -128,8 +155,22 @@
                             android:layout_height="match_parent"
                             android:gravity="center"
                             android:orientation="vertical">
-                            <TextView android:text="内存占用" android:textColor="#999999" android:textSize="12sp"/>
-                            <TextView android:id="@+id/tvMem" android:text="--%" android:textColor="#009688" android:textSize="20sp" android:textStyle="bold" android:layout_marginTop="4dp"/>
+                            
+                            <TextView
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:text="内存占用"
+                                android:textColor="#999999"
+                                android:textSize="12sp"/>
+                            <TextView
+                                android:id="@+id/tvMem"
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:text="--%"
+                                android:textColor="#009688"
+                                android:textSize="20sp"
+                                android:textStyle="bold"
+                                android:layout_marginTop="4dp"/>
                         </LinearLayout>
                     </com.google.android.material.card.MaterialCardView>
 
@@ -146,9 +187,26 @@
                             android:layout_height="match_parent"
                             android:gravity="center"
                             android:orientation="vertical">
-                            <TextView android:text="网络带宽" android:textColor="#999999" android:textSize="12sp" android:layout_marginBottom="4dp"/>
-                            <TextView android:text="↑ 0 MB/s" android:textColor="#FF9800" android:textSize="13sp"/>
-                            <TextView android:text="↓ 0 MB/s" android:textColor="#4CAF50" android:textSize="13sp"/>
+                            
+                            <TextView
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:text="网络带宽"
+                                android:textColor="#999999"
+                                android:textSize="12sp"
+                                android:layout_marginBottom="4dp"/>
+                            <TextView
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:text="↑ 0 MB/s"
+                                android:textColor="#FF9800"
+                                android:textSize="13sp"/>
+                            <TextView
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:text="↓ 0 MB/s"
+                                android:textColor="#4CAF50"
+                                android:textSize="13sp"/>
                         </LinearLayout>
                     </com.google.android.material.card.MaterialCardView>
                 </LinearLayout>
