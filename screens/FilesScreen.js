@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback, useLayoutEffect } from 'react';
-import { StyleSheet, Text, View, TextInput, TouchableOpacity, ActivityIndicator, KeyboardAvoidingView, Platform, Alert, ScrollView, Modal, BackHandler, Pressable } from 'react-native';
+import { StyleSheet, Text, View, TextInput, TouchableOpacity, ActivityIndicator, KeyboardAvoidingView, Platform, Alert, ScrollView, Modal, BackHandler, Pressable, RefreshControl } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { Folder, Save, Server, Key, User, File, ChevronLeft, LogOut, HardDrive, Plus, ArrowDownUp, FolderPlus, FilePlus, UploadCloud, DownloadCloud, CheckCircle, XCircle } from 'lucide-react-native';
+import { Folder, Save, Server, Key, User, File, ChevronLeft, LogOut, HardDrive, Plus, ArrowDownUp, FolderPlus, FilePlus, UploadCloud, DownloadCloud } from 'lucide-react-native';
 import base64 from 'base-64';
 import { XMLParser } from 'fast-xml-parser';
 import * as DocumentPicker from 'expo-document-picker';
@@ -19,11 +19,14 @@ export default function FilesScreen({ navigation }) {
   const [currentPath, setCurrentPath] = useState(''); 
   const [fileList, setFileList] = useState([]);
   const [isLoadingList, setIsLoadingList] = useState(false);
+  
+  // 💡 新增：下拉刷新的状态
+  const [isRefreshing, setIsRefreshing] = useState(false);
 
   // 弹窗与传输状态
   const [isMenuVisible, setIsMenuVisible] = useState(false);
   const [isTransferVisible, setIsTransferVisible] = useState(false);
-  const [transfers, setTransfers] = useState([]); // 存储传输任务列表
+  const [transfers, setTransfers] = useState([]); 
 
   useEffect(() => {
     const loadConfig = async () => {
@@ -140,6 +143,13 @@ export default function FilesScreen({ navigation }) {
     if (isConnected && currentPath) fetchDirectory(currentPath);
   }, [isConnected]);
 
+  // 💡 新增：下拉刷新处理函数
+  const onRefresh = useCallback(async () => {
+    setIsRefreshing(true);
+    await fetchDirectory(currentPath);
+    setIsRefreshing(false);
+  }, [currentPath, fetchDirectory]);
+
   const rootPathMatch = davUrl.match(/^(https?:\/\/[^\/]+)(.*)$/);
   const rootPath = rootPathMatch && rootPathMatch[2] ? rootPathMatch[2] : '/';
   const isAtRoot = currentPath === rootPath || currentPath === rootPath + '/';
@@ -166,7 +176,7 @@ export default function FilesScreen({ navigation }) {
   };
 
   // ==========================================
-  // 🚀 核心上传逻辑：基于原生 DocumentPicker
+  // 🚀 核心上传逻辑：彻底修复 URL 拼接错误
   // ==========================================
   const handleUpload = async () => {
     setIsMenuVisible(false);
@@ -175,15 +185,18 @@ export default function FilesScreen({ navigation }) {
       if (!result.canceled && result.assets && result.assets.length > 0) {
         const file = result.assets[0];
         
-        // 加入传输列表
         const newTransfer = { id: Date.now(), name: file.name, type: '上传', status: '正在传输...' };
         setTransfers(prev => [newTransfer, ...prev]);
         setIsTransferVisible(true);
 
-        const uploadUrl = davUrl + (currentPath === '/' ? '' : currentPath) + encodeURIComponent(file.name);
+        // 💡 修复拼接逻辑：获取根域名 + 绝对路径 + 文件名
+        const originMatch = davUrl.match(/^(https?:\/\/[^\/]+)/);
+        const origin = originMatch ? originMatch[1] : '';
+        const targetDir = currentPath.endsWith('/') ? currentPath : currentPath + '/';
+        const uploadUrl = origin + targetDir + encodeURIComponent(file.name);
+        
         const credentials = base64.encode(`${username}:${password}`);
 
-        // 使用 FileSystem 发起真实的 PUT 推送
         const uploadRes = await FileSystem.uploadAsync(uploadUrl, file.uri, {
           httpMethod: 'PUT',
           headers: { 'Authorization': `Basic ${credentials}` },
@@ -191,7 +204,7 @@ export default function FilesScreen({ navigation }) {
 
         if (uploadRes.status === 201 || uploadRes.status === 204 || uploadRes.status === 200) {
           setTransfers(prev => prev.map(t => t.id === newTransfer.id ? { ...t, status: '✅ 成功' } : t));
-          fetchDirectory(currentPath); // 刷新当前列表
+          fetchDirectory(currentPath); // 上传完立刻刷新列表
         } else {
           setTransfers(prev => prev.map(t => t.id === newTransfer.id ? { ...t, status: `❌ 失败 (${uploadRes.status})` } : t));
         }
@@ -201,12 +214,8 @@ export default function FilesScreen({ navigation }) {
     }
   };
 
-  // ==========================================
-  // 🚀 核心下载逻辑：基于高级 SAF 隔离存储授权
-  // ==========================================
   const handleDownload = async (item) => {
     try {
-      // 1. 弹出官方沙盒授权页，让用户仅授权一个特定文件夹
       const permissions = await FileSystem.StorageAccessFramework.requestDirectoryPermissionsAsync();
       if (!permissions.granted) {
         Alert.alert('已取消', '你需要授权一个文件夹才能保存文件');
@@ -221,22 +230,49 @@ export default function FilesScreen({ navigation }) {
       const downloadUrl = (originMatch ? originMatch[1] : '') + item.href;
       const credentials = base64.encode(`${username}:${password}`);
 
-      // 2. 先把文件下载到 App 的私有缓存区
       const localUri = FileSystem.cacheDirectory + encodeURIComponent(item.name);
       const downloadRes = await FileSystem.downloadAsync(downloadUrl, localUri, {
         headers: { 'Authorization': `Basic ${credentials}` }
       });
 
-      // 3. 将文件写入用户刚才授权的那个专属文件夹中
       const base64Data = await FileSystem.readAsStringAsync(downloadRes.uri, { encoding: FileSystem.EncodingType.Base64 });
       const newFileUri = await FileSystem.StorageAccessFramework.createFileAsync(permissions.directoryUri, item.name, 'application/octet-stream');
       await FileSystem.writeAsStringAsync(newFileUri, base64Data, { encoding: FileSystem.EncodingType.Base64 });
 
       setTransfers(prev => prev.map(t => t.id === newTransfer.id ? { ...t, status: '✅ 成功' } : t));
     } catch (error) {
-      Alert.alert('下载失败', '文件可能过大导致内存溢出，或网络连接中断');
+      Alert.alert('下载失败', '文件可能过大或网络连接中断');
       setTransfers(prev => prev.map(t => t.name === item.name && t.status === '正在传输...' ? { ...t, status: '❌ 失败' } : t));
     }
+  };
+
+  // 💡 新增：核心删除逻辑 (WebDAV DELETE 协议)
+  const handleDelete = (item) => {
+    Alert.alert('确认删除', `确定要彻底删除 ${item.isFolder ? '文件夹' : '文件'} \n"${item.name}" 吗？\n此操作不可恢复！`, [
+      { text: '取消', style: 'cancel' },
+      { text: '删除', style: 'destructive', onPress: async () => {
+          try {
+            const originMatch = davUrl.match(/^(https?:\/\/[^\/]+)/);
+            const origin = originMatch ? originMatch[1] : '';
+            const deleteUrl = origin + item.href;
+            const credentials = base64.encode(`${username}:${password}`);
+
+            const res = await fetch(deleteUrl, {
+              method: 'DELETE',
+              headers: { 'Authorization': `Basic ${credentials}` }
+            });
+
+            if (res.status === 200 || res.status === 204) {
+              fetchDirectory(currentPath); // 删完立刻刷新列表
+            } else {
+              Alert.alert('删除失败', `服务器拒绝执行 (HTTP ${res.status})\n请检查 AList 中该存储是否开启了写入权限。`);
+            }
+          } catch (error) {
+            Alert.alert('删除出错', error.message);
+          }
+        }
+      }
+    ]);
   };
 
   const handleFileClick = (item) => {
@@ -268,7 +304,6 @@ export default function FilesScreen({ navigation }) {
           </TouchableOpacity>
         ) : null
       ),
-      // 💡 右上角按钮组：左侧是传输任务，右侧是加号
       headerRight: () => (
         <View style={styles.headerBtnGroupRight}>
           <TouchableOpacity onPress={() => setIsTransferVisible(true)} style={styles.transferIconBtn}>
@@ -313,15 +348,33 @@ export default function FilesScreen({ navigation }) {
 
   return (
     <View style={styles.fileContainer}>
-      {isLoadingList ? (
+      {isLoadingList && !isRefreshing ? (
         <View style={styles.listCenter}><ActivityIndicator size="large" color="#3b82f6" /></View>
       ) : (
-        <ScrollView style={styles.listScroll} contentContainerStyle={styles.listContent}>
+        <ScrollView 
+          style={styles.listScroll} 
+          contentContainerStyle={styles.listContent}
+          /* 💡 新增：原生下拉刷新控件 */
+          refreshControl={
+            <RefreshControl 
+              refreshing={isRefreshing} 
+              onRefresh={onRefresh} 
+              tintColor="#3b82f6" 
+              colors={['#3b82f6']} 
+            />
+          }
+        >
           {fileList.length === 0 ? (
-            <View style={styles.listCenter}><Text style={styles.emptyText}>空文件夹</Text></View>
+            <View style={styles.listCenter}><Text style={styles.emptyText}>空文件夹，下拉可刷新</Text></View>
           ) : (
             fileList.map((item, index) => (
-              <TouchableOpacity key={index} style={styles.fileRow} onPress={() => handleFileClick(item)}>
+              <TouchableOpacity 
+                key={index} 
+                style={styles.fileRow} 
+                onPress={() => handleFileClick(item)}
+                onLongPress={() => handleDelete(item)} // 💡 新增：长按触发删除
+                delayLongPress={500}
+              >
                 <View style={styles.fileIconBox}>
                   {item.isFolder ? <Folder color="#3b82f6" size={24} fill="rgba(59, 130, 246, 0.2)" /> : <File color="#9ca3af" size={24} />}
                 </View>
@@ -404,7 +457,6 @@ const styles = StyleSheet.create({
   saveBtn: { backgroundColor: '#3b82f6', height: 50, borderRadius: 8, justifyContent: 'center', alignItems: 'center', marginTop: 10 },
   saveBtnText: { color: '#ffffff', fontSize: 18, fontWeight: 'bold' },
 
-  // 原生顶栏按钮
   headerBtnLeft: { marginLeft: 8, padding: 4 },
   headerBtnGroupRight: { flexDirection: 'row', alignItems: 'center', marginRight: 16 },
   transferIconBtn: { backgroundColor: 'rgba(59, 130, 246, 0.15)', padding: 6, borderRadius: 8, borderWidth: 1, borderColor: 'rgba(59, 130, 246, 0.3)' },
