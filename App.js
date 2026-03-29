@@ -11,6 +11,7 @@ import DockerDetailsScreen from './screens/DockerDetailsScreen';
 import VmDetailsScreen from './screens/VmDetailsScreen';
 import StorageDetailsScreen from './screens/StorageDetailsScreen';
 import SmartDetailsScreen from './screens/SmartDetailsScreen';
+import MediaScreen from './screens/MediaScreen';
 
 
 const Tab = createBottomTabNavigator();
@@ -41,7 +42,7 @@ function HomeStack() {
 
 // 占位页面
 function FilesScreen() { return <View style={styles.container}><Text style={styles.text}>WebDAV 管理</Text></View>; }
-function MediaScreen() { return <View style={styles.container}><Text style={styles.text}>Emby 影音</Text></View>; }
+
 
 // --- 底部主导航栏 ---
 export default function App() {
