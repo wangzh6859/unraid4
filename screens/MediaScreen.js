@@ -1,8 +1,8 @@
 import React, { useState, useEffect } from 'react';
-import { StyleSheet, Text, View, TextInput, TouchableOpacity, ActivityIndicator, KeyboardAvoidingView, Platform } from 'react-native';
+import { StyleSheet, Text, View, TextInput, TouchableOpacity, ActivityIndicator, Platform } from 'react-native';
 import { WebView } from 'react-native-webview';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { Film, Save, RefreshCw, Home } from 'lucide-react-native';
+import { Film, Save, RefreshCw } from 'lucide-react-native';
 
 export default function MediaScreen({ navigation }) {
   const [mediaUrl, setMediaUrl] = useState(null);
@@ -31,7 +31,7 @@ export default function MediaScreen({ navigation }) {
           if (savedUnraidUrl) setInputUrl(guessEmbyUrl(savedUnraidUrl));
         }
       } catch (e) {
-        console.log('读取地址失败', e);
+        console.log(e);
       } finally {
         setIsLoading(false);
       }
@@ -45,27 +45,23 @@ export default function MediaScreen({ navigation }) {
     if (!cleanUrl.startsWith('http://') && !cleanUrl.startsWith('https://')) {
       cleanUrl = 'http://' + cleanUrl;
     }
-    try {
-      await AsyncStorage.setItem('@media_url', cleanUrl);
-      setMediaUrl(cleanUrl);
-    } catch (e) { console.log('保存失败', e); }
+    await AsyncStorage.setItem('@media_url', cleanUrl);
+    setMediaUrl(cleanUrl);
   };
 
   const handleResetUrl = async () => {
-    try {
-      await AsyncStorage.removeItem('@media_url');
-      setMediaUrl(null);
-      const savedUnraidUrl = await AsyncStorage.getItem('@server_url');
-      if (savedUnraidUrl) setInputUrl(guessEmbyUrl(savedUnraidUrl));
-    } catch (e) { console.log('重置失败', e); }
+    await AsyncStorage.removeItem('@media_url');
+    setMediaUrl(null);
+    const savedUnraidUrl = await AsyncStorage.getItem('@server_url');
+    if (savedUnraidUrl) setInputUrl(guessEmbyUrl(savedUnraidUrl));
   };
 
   if (isLoading) return <View style={styles.center}><ActivityIndicator size="large" color="#f59e0b" /></View>;
 
-  // --- 引导配置页 ---
+  // 引导配置页
   if (!mediaUrl) {
     return (
-      <KeyboardAvoidingView style={styles.center} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
+      <View style={styles.center}>
         <View style={styles.setupCard}>
           <Film color="#f59e0b" size={48} style={{ alignSelf: 'center', marginBottom: 16 }} />
           <Text style={styles.setupTitle}>私人影音库</Text>
@@ -89,14 +85,13 @@ export default function MediaScreen({ navigation }) {
         <TouchableOpacity style={styles.cancelBtn} onPress={() => navigation.navigate('首页')}>
           <Text style={styles.cancelBtnText}>暂不配置，返回首页</Text>
         </TouchableOpacity>
-      </KeyboardAvoidingView>
+      </View>
     );
   }
 
-  // --- WebView 渲染页 ---
+  // WebView 渲染页
   return (
     <View style={styles.webViewContainer}>
-      {/* 沉浸式网页内嵌 */}
       <WebView 
         source={{ uri: mediaUrl }} 
         style={styles.webView}
@@ -104,8 +99,6 @@ export default function MediaScreen({ navigation }) {
         startInLoadingState={true}
         renderLoading={() => <View style={styles.webViewLoader}><ActivityIndicator size="large" color="#f59e0b" /></View>}
       />
-
-      {/* 悬浮球 (由于恢复了底部导航栏，我们可以把返回首页的球去掉了，只保留重新配置) */}
       <View style={styles.fabContainer}>
         <TouchableOpacity style={styles.fab} onPress={handleResetUrl}>
           <RefreshCw color="#ffffff" size={18} />
@@ -130,22 +123,6 @@ const styles = StyleSheet.create({
   webViewContainer: { flex: 1, backgroundColor: '#000000' },
   webView: { flex: 1, backgroundColor: '#000000', marginTop: Platform.OS === 'ios' ? 40 : 25 }, 
   webViewLoader: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, justifyContent: 'center', alignItems: 'center', backgroundColor: '#000000' },
-
-  fabContainer: {
-    position: 'absolute',
-    right: 16,
-    bottom: 80, // 高度调整：完美避开 Emby 的菜单和我们自己的底部栏
-    alignItems: 'center',
-  },
-  fab: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    backgroundColor: 'rgba(31, 41, 55, 0.7)', 
-    justifyContent: 'center',
-    alignItems: 'center',
-    borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.1)',
-    elevation: 5,
-  }
+  fabContainer: { position: 'absolute', right: 16, bottom: 80, alignItems: 'center' }, // 悬浮球完美避开底栏
+  fab: { width: 44, height: 44, borderRadius: 22, backgroundColor: 'rgba(31, 41, 55, 0.7)', justifyContent: 'center', alignItems: 'center', borderWidth: 1, borderColor: 'rgba(255, 255, 255, 0.1)', elevation: 5 }
 });

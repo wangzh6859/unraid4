@@ -2,9 +2,10 @@ import React from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 import { NavigationContainer } from '@react-navigation/native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
-import { createNativeStackNavigator } from '@react-navigation/native-stack'; // 引入堆栈导航
+import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { Home, Folder, Film, Settings } from 'lucide-react-native'; 
 
+// 引入所有子页面
 import DashboardScreen from './screens/DashboardScreen';
 import SettingsScreen from './screens/SettingsScreen';
 import DockerDetailsScreen from './screens/DockerDetailsScreen';
@@ -13,13 +14,13 @@ import StorageDetailsScreen from './screens/StorageDetailsScreen';
 import SmartDetailsScreen from './screens/SmartDetailsScreen';
 import MediaScreen from './screens/MediaScreen';
 
-
 const Tab = createBottomTabNavigator();
 const Stack = createNativeStackNavigator();
 
+// 临时占位文件页
+function FilesScreen() { return <View style={styles.container}><Text style={styles.text}>WebDAV 管理页面即将到来</Text></View>; }
 
-
-// --- 将首页和它的二级页面打包成一个“堆栈 (Stack)” ---
+// 首页的堆栈路由
 function HomeStack() {
   return (
     <Stack.Navigator
@@ -29,22 +30,16 @@ function HomeStack() {
         contentStyle: { backgroundColor: '#111827' }
       }}
     >
-      {/* 首页本身不显示顶部导航条，因为我们自己画了 Header */}
       <Stack.Screen name="仪表盘" component={DashboardScreen} options={{ headerShown: false }} />
-      {/* 以下是二级页面，会自动带有返回按钮 */}
-      <Stack.Screen name="Docker详情" component={DockerDetailsScreen} options={{ title: 'Docker 管理' }} />
-      <Stack.Screen name="VM详情" component={VmDetailsScreen} options={{ title: '虚拟机 管理' }} />
+      <Stack.Screen name="Docker详情" component={DockerDetailsScreen} options={{ title: 'Docker 容器' }} />
+      <Stack.Screen name="VM详情" component={VmDetailsScreen} options={{ title: '虚拟机' }} />
       <Stack.Screen name="存储详情" component={StorageDetailsScreen} options={{ title: '磁盘存储详情' }} />
       <Stack.Screen name="SMART详情" component={SmartDetailsScreen} options={{ title: 'S.M.A.R.T. 诊断' }} />
     </Stack.Navigator>
   );
 }
 
-// 占位页面
-function FilesScreen() { return <View style={styles.container}><Text style={styles.text}>WebDAV 管理</Text></View>; }
-
-
-// --- 底部主导航栏 ---
+// 底部主导航
 export default function App() {
   return (
     <NavigationContainer>
@@ -64,10 +59,8 @@ export default function App() {
           sceneContainerStyle: { backgroundColor: '#111827' },
         })}
       >
-        {/* 注意：这里的首页绑定的是 HomeStack，而不是单纯的 DashboardScreen 了！ */}
         <Tab.Screen name="首页" component={HomeStack} options={{ headerShown: false }} />
         <Tab.Screen name="文件" component={FilesScreen} />
-        <Tab.Screen name="影音" component={MediaScreen} />
         <Tab.Screen name="影音" component={MediaScreen} options={{ headerShown: false }} />
         <Tab.Screen name="设置" component={SettingsScreen} />
       </Tab.Navigator>
