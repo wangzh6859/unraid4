@@ -1,9 +1,11 @@
 import React, { useState, useEffect, useCallback, useLayoutEffect } from 'react';
 import { StyleSheet, Text, View, TextInput, TouchableOpacity, ActivityIndicator, KeyboardAvoidingView, Platform, Alert, ScrollView, Modal, BackHandler, Pressable } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { Folder, Save, Server, Key, User, File, ChevronLeft, LogOut, HardDrive, Plus, ArrowRightLeft, FolderPlus, FilePlus, UploadCloud } from 'lucide-react-native';
+import { Folder, Save, Server, Key, User, File, ChevronLeft, LogOut, HardDrive, Plus, ArrowDownUp, FolderPlus, FilePlus, UploadCloud, DownloadCloud, CheckCircle, XCircle } from 'lucide-react-native';
 import base64 from 'base-64';
 import { XMLParser } from 'fast-xml-parser';
+import * as DocumentPicker from 'expo-document-picker';
+import * as FileSystem from 'expo-file-system';
 
 export default function FilesScreen({ navigation }) {
   const [davUrl, setDavUrl] = useState('');
@@ -18,11 +20,11 @@ export default function FilesScreen({ navigation }) {
   const [fileList, setFileList] = useState([]);
   const [isLoadingList, setIsLoadingList] = useState(false);
 
-  // 弹窗状态
+  // 弹窗与传输状态
   const [isMenuVisible, setIsMenuVisible] = useState(false);
   const [isTransferVisible, setIsTransferVisible] = useState(false);
+  const [transfers, setTransfers] = useState([]); // 存储传输任务列表
 
-  // 1. 初始化
   useEffect(() => {
     const loadConfig = async () => {
       try {
@@ -79,9 +81,7 @@ export default function FilesScreen({ navigation }) {
         const urlObj = cleanUrl.match(/^(https?:\/\/[^\/]+)(.*)$/);
         setCurrentPath(urlObj && urlObj[2] ? urlObj[2] : '/');
         setIsConnected(true);
-      } else {
-        Alert.alert('连接失败', `状态码：${response.status}`);
-      }
+      } else { Alert.alert('连接失败', `状态码：${response.status}`); }
     } catch (error) { Alert.alert('网络错误', '无法连接'); } finally { setIsTesting(false); }
   };
 
@@ -89,8 +89,7 @@ export default function FilesScreen({ navigation }) {
     setIsLoadingList(true);
     try {
       const originMatch = davUrl.match(/^(https?:\/\/[^\/]+)/);
-      const origin = originMatch ? originMatch[1] : '';
-      const fullUrl = origin + targetPath;
+      const fullUrl = (originMatch ? originMatch[1] : '') + targetPath;
       const credentials = base64.encode(`${username}:${password}`);
       const response = await fetch(fullUrl, {
         method: 'PROPFIND',
@@ -124,12 +123,7 @@ export default function FilesScreen({ navigation }) {
           try { displayName = decodeURIComponent(displayName); } catch(e){}
         }
 
-        parsedFiles.push({
-          name: displayName,
-          href: href,
-          isFolder: isFolder,
-          size: props.getcontentlength || 0,
-        });
+        parsedFiles.push({ name: displayName, href: href, isFolder: isFolder, size: props.getcontentlength || 0 });
       });
 
       parsedFiles.sort((a, b) => {
@@ -139,12 +133,7 @@ export default function FilesScreen({ navigation }) {
 
       setFileList(parsedFiles);
       setCurrentPath(targetPath);
-    } catch (error) {
-      console.log('解析文件列表失败', error);
-      Alert.alert('错误', '读取目录失败');
-    } finally {
-      setIsLoadingList(false);
-    }
+    } catch (error) { Alert.alert('错误', '读取目录失败'); } finally { setIsLoadingList(false); }
   }, [davUrl, username, password]);
 
   useEffect(() => {
@@ -158,19 +147,13 @@ export default function FilesScreen({ navigation }) {
   const goBack = useCallback(() => {
     if (isAtRoot) return;
     let p = currentPath.endsWith('/') ? currentPath.slice(0, -1) : currentPath;
-    const lastSlash = p.lastIndexOf('/');
-    const parentPath = p.substring(0, lastSlash + 1);
-    fetchDirectory(parentPath);
+    fetchDirectory(p.substring(0, p.lastIndexOf('/') + 1));
   }, [currentPath, isAtRoot, fetchDirectory]);
 
-  // 💡 核心：拦截安卓物理返回键
   useEffect(() => {
     const onBackPress = () => {
-      if (isConnected && !isAtRoot) {
-        goBack();
-        return true; // 阻断默认返回桌面的行为
-      }
-      return false; // 在根目录时允许返回首页
+      if (isConnected && !isAtRoot) { goBack(); return true; }
+      return false; 
     };
     BackHandler.addEventListener('hardwareBackPress', onBackPress);
     return () => BackHandler.removeEventListener('hardwareBackPress', onBackPress);
@@ -182,42 +165,125 @@ export default function FilesScreen({ navigation }) {
     setIsConnected(false);
   };
 
-  // 💡 核心：利用 React Navigation 挂载原生顶部按钮
+  // ==========================================
+  // 🚀 核心上传逻辑：基于原生 DocumentPicker
+  // ==========================================
+  const handleUpload = async () => {
+    setIsMenuVisible(false);
+    try {
+      const result = await DocumentPicker.getDocumentAsync({ copyToCacheDirectory: true });
+      if (!result.canceled && result.assets && result.assets.length > 0) {
+        const file = result.assets[0];
+        
+        // 加入传输列表
+        const newTransfer = { id: Date.now(), name: file.name, type: '上传', status: '正在传输...' };
+        setTransfers(prev => [newTransfer, ...prev]);
+        setIsTransferVisible(true);
+
+        const uploadUrl = davUrl + (currentPath === '/' ? '' : currentPath) + encodeURIComponent(file.name);
+        const credentials = base64.encode(`${username}:${password}`);
+
+        // 使用 FileSystem 发起真实的 PUT 推送
+        const uploadRes = await FileSystem.uploadAsync(uploadUrl, file.uri, {
+          httpMethod: 'PUT',
+          headers: { 'Authorization': `Basic ${credentials}` },
+        });
+
+        if (uploadRes.status === 201 || uploadRes.status === 204 || uploadRes.status === 200) {
+          setTransfers(prev => prev.map(t => t.id === newTransfer.id ? { ...t, status: '✅ 成功' } : t));
+          fetchDirectory(currentPath); // 刷新当前列表
+        } else {
+          setTransfers(prev => prev.map(t => t.id === newTransfer.id ? { ...t, status: `❌ 失败 (${uploadRes.status})` } : t));
+        }
+      }
+    } catch (error) {
+      Alert.alert('上传失败', error.message);
+    }
+  };
+
+  // ==========================================
+  // 🚀 核心下载逻辑：基于高级 SAF 隔离存储授权
+  // ==========================================
+  const handleDownload = async (item) => {
+    try {
+      // 1. 弹出官方沙盒授权页，让用户仅授权一个特定文件夹
+      const permissions = await FileSystem.StorageAccessFramework.requestDirectoryPermissionsAsync();
+      if (!permissions.granted) {
+        Alert.alert('已取消', '你需要授权一个文件夹才能保存文件');
+        return;
+      }
+
+      const newTransfer = { id: Date.now(), name: item.name, type: '下载', status: '正在传输...' };
+      setTransfers(prev => [newTransfer, ...prev]);
+      setIsTransferVisible(true);
+
+      const originMatch = davUrl.match(/^(https?:\/\/[^\/]+)/);
+      const downloadUrl = (originMatch ? originMatch[1] : '') + item.href;
+      const credentials = base64.encode(`${username}:${password}`);
+
+      // 2. 先把文件下载到 App 的私有缓存区
+      const localUri = FileSystem.cacheDirectory + encodeURIComponent(item.name);
+      const downloadRes = await FileSystem.downloadAsync(downloadUrl, localUri, {
+        headers: { 'Authorization': `Basic ${credentials}` }
+      });
+
+      // 3. 将文件写入用户刚才授权的那个专属文件夹中
+      const base64Data = await FileSystem.readAsStringAsync(downloadRes.uri, { encoding: FileSystem.EncodingType.Base64 });
+      const newFileUri = await FileSystem.StorageAccessFramework.createFileAsync(permissions.directoryUri, item.name, 'application/octet-stream');
+      await FileSystem.writeAsStringAsync(newFileUri, base64Data, { encoding: FileSystem.EncodingType.Base64 });
+
+      setTransfers(prev => prev.map(t => t.id === newTransfer.id ? { ...t, status: '✅ 成功' } : t));
+    } catch (error) {
+      Alert.alert('下载失败', '文件可能过大导致内存溢出，或网络连接中断');
+      setTransfers(prev => prev.map(t => t.name === item.name && t.status === '正在传输...' ? { ...t, status: '❌ 失败' } : t));
+    }
+  };
+
+  const handleFileClick = (item) => {
+    if (item.isFolder) {
+      fetchDirectory(item.href);
+    } else {
+      Alert.alert('文件操作', `名称：${item.name}\n大小：${formatBytes(item.size)}`, [
+        { text: '取消', style: 'cancel' },
+        { text: '下载到手机', onPress: () => handleDownload(item) }
+      ]);
+    }
+  };
+
   useLayoutEffect(() => {
     if (!isConnected) {
       navigation.setOptions({ title: '连接文件库', headerLeft: null, headerRight: null });
       return;
     }
 
-    // 提取当前文件夹名称作为标题
     const pathParts = currentPath.split('/').filter(Boolean);
     const titleName = isAtRoot ? '根目录' : decodeURIComponent(pathParts[pathParts.length - 1]);
 
     navigation.setOptions({
       title: titleName,
       headerLeft: () => (
-        <View style={styles.headerBtnGroup}>
-          {!isAtRoot && (
-            <TouchableOpacity onPress={goBack} style={styles.headerBtn}>
-              <ChevronLeft color="#ffffff" size={28} />
-            </TouchableOpacity>
-          )}
-          <TouchableOpacity onPress={() => setIsTransferVisible(true)} style={[styles.headerBtn, { marginLeft: isAtRoot ? 16 : 0 }]}>
-            <ArrowRightLeft color="#ffffff" size={22} />
+        !isAtRoot ? (
+          <TouchableOpacity onPress={goBack} style={styles.headerBtnLeft}>
+            <ChevronLeft color="#ffffff" size={28} />
+          </TouchableOpacity>
+        ) : null
+      ),
+      // 💡 右上角按钮组：左侧是传输任务，右侧是加号
+      headerRight: () => (
+        <View style={styles.headerBtnGroupRight}>
+          <TouchableOpacity onPress={() => setIsTransferVisible(true)} style={styles.transferIconBtn}>
+            <ArrowDownUp color="#3b82f6" size={20} />
+          </TouchableOpacity>
+          <TouchableOpacity onPress={() => setIsMenuVisible(true)} style={{ marginLeft: 16 }}>
+            <Plus color="#ffffff" size={28} />
           </TouchableOpacity>
         </View>
-      ),
-      headerRight: () => (
-        <TouchableOpacity onPress={() => setIsMenuVisible(true)} style={{ marginRight: 16 }}>
-          <Plus color="#ffffff" size={28} />
-        </TouchableOpacity>
       )
     });
   }, [navigation, isConnected, currentPath, isAtRoot, goBack]);
 
   if (isLoading) return <View style={styles.center}><ActivityIndicator size="large" color="#3b82f6" /></View>;
 
-  // --- 状态A：连接配置页 ---
   if (!isConnected) {
     return (
       <KeyboardAvoidingView style={styles.center} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
@@ -245,7 +311,6 @@ export default function FilesScreen({ navigation }) {
     );
   }
 
-  // --- 状态B：全屏纯净文件列表 ---
   return (
     <View style={styles.fileContainer}>
       {isLoadingList ? (
@@ -256,17 +321,7 @@ export default function FilesScreen({ navigation }) {
             <View style={styles.listCenter}><Text style={styles.emptyText}>空文件夹</Text></View>
           ) : (
             fileList.map((item, index) => (
-              <TouchableOpacity 
-                key={index} 
-                style={styles.fileRow}
-                onPress={() => {
-                  if (item.isFolder) {
-                    fetchDirectory(item.href);
-                  } else {
-                    Alert.alert('文件详情', `名称：${item.name}\n大小：${formatBytes(item.size)}`);
-                  }
-                }}
-              >
+              <TouchableOpacity key={index} style={styles.fileRow} onPress={() => handleFileClick(item)}>
                 <View style={styles.fileIconBox}>
                   {item.isFolder ? <Folder color="#3b82f6" size={24} fill="rgba(59, 130, 246, 0.2)" /> : <File color="#9ca3af" size={24} />}
                 </View>
@@ -280,11 +335,11 @@ export default function FilesScreen({ navigation }) {
         </ScrollView>
       )}
 
-      {/* --- 弹窗 1：右上角加号菜单 --- */}
+      {/* --- 右上角下拉菜单 --- */}
       <Modal visible={isMenuVisible} transparent={true} animationType="fade" onRequestClose={() => setIsMenuVisible(false)}>
         <Pressable style={styles.modalOverlay} onPress={() => setIsMenuVisible(false)}>
           <View style={styles.dropdownMenu}>
-            <TouchableOpacity style={styles.menuItem} onPress={() => { setIsMenuVisible(false); Alert.alert('提示', '上传文件功能开发中'); }}>
+            <TouchableOpacity style={styles.menuItem} onPress={handleUpload}>
               <UploadCloud color="#e5e7eb" size={20} /><Text style={styles.menuText}>上传文件</Text>
             </TouchableOpacity>
             <View style={styles.divider} />
@@ -295,7 +350,6 @@ export default function FilesScreen({ navigation }) {
               <FilePlus color="#e5e7eb" size={20} /><Text style={styles.menuText}>新建文件</Text>
             </TouchableOpacity>
             <View style={styles.divider} />
-            {/* 为了界面整洁，断开连接移到了这里 */}
             <TouchableOpacity style={styles.menuItem} onPress={disconnect}>
               <LogOut color="#ef4444" size={20} /><Text style={[styles.menuText, { color: '#ef4444' }]}>断开 WebDAV 连接</Text>
             </TouchableOpacity>
@@ -303,17 +357,36 @@ export default function FilesScreen({ navigation }) {
         </Pressable>
       </Modal>
 
-      {/* --- 弹窗 2：左上角传输任务列表 --- */}
+      {/* --- 传输任务中心 --- */}
       <Modal visible={isTransferVisible} animationType="slide" onRequestClose={() => setIsTransferVisible(false)}>
         <View style={styles.transferModal}>
           <View style={styles.transferHeader}>
             <Text style={styles.transferTitle}>传输任务</Text>
             <TouchableOpacity onPress={() => setIsTransferVisible(false)}><Text style={styles.closeText}>关闭</Text></TouchableOpacity>
           </View>
-          <View style={styles.listCenter}>
-            <ArrowRightLeft color="#374151" size={48} style={{ marginBottom: 16 }} />
-            <Text style={styles.emptyText}>当前没有正在进行的传输任务</Text>
-          </View>
+          
+          <ScrollView contentContainerStyle={styles.transferContent}>
+            {transfers.length === 0 ? (
+              <View style={[styles.listCenter, { marginTop: 100 }]}>
+                <ArrowDownUp color="#374151" size={48} style={{ marginBottom: 16 }} />
+                <Text style={styles.emptyText}>当前没有正在进行的传输任务</Text>
+              </View>
+            ) : (
+              transfers.map((item) => (
+                <View key={item.id} style={styles.transferRow}>
+                  <View style={styles.transferIconBox}>
+                    {item.type === '上传' ? <UploadCloud color="#f59e0b" size={20} /> : <DownloadCloud color="#10b981" size={20} />}
+                  </View>
+                  <View style={styles.transferInfo}>
+                    <Text style={styles.transferName} numberOfLines={1}>{item.name}</Text>
+                    <Text style={[styles.transferStatus, 
+                      { color: item.status.includes('成功') ? '#10b981' : item.status.includes('失败') ? '#ef4444' : '#3b82f6' }
+                    ]}>{item.type} - {item.status}</Text>
+                  </View>
+                </View>
+              ))
+            )}
+          </ScrollView>
         </View>
       </Modal>
     </View>
@@ -331,9 +404,10 @@ const styles = StyleSheet.create({
   saveBtn: { backgroundColor: '#3b82f6', height: 50, borderRadius: 8, justifyContent: 'center', alignItems: 'center', marginTop: 10 },
   saveBtnText: { color: '#ffffff', fontSize: 18, fontWeight: 'bold' },
 
-  // 原生顶栏按钮组
-  headerBtnGroup: { flexDirection: 'row', alignItems: 'center' },
-  headerBtn: { marginRight: 16 },
+  // 原生顶栏按钮
+  headerBtnLeft: { marginLeft: 8, padding: 4 },
+  headerBtnGroupRight: { flexDirection: 'row', alignItems: 'center', marginRight: 16 },
+  transferIconBtn: { backgroundColor: 'rgba(59, 130, 246, 0.15)', padding: 6, borderRadius: 8, borderWidth: 1, borderColor: 'rgba(59, 130, 246, 0.3)' },
 
   fileContainer: { flex: 1, backgroundColor: '#111827' },
   listCenter: { flex: 1, justifyContent: 'center', alignItems: 'center', minHeight: 300 },
@@ -346,18 +420,20 @@ const styles = StyleSheet.create({
   fileName: { color: '#e5e7eb', fontSize: 15, fontWeight: '500' },
   fileSize: { color: '#9ca3af', fontSize: 12, marginTop: 4 },
 
-  // 弹出层通用样式
   modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)' },
-  
-  // 右上角下拉菜单
-  dropdownMenu: { position: 'absolute', top: Platform.OS === 'ios' ? 100 : 60, right: 16, backgroundColor: '#1f2937', borderRadius: 12, padding: 8, width: 200, elevation: 5, shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.3, shadowRadius: 4 },
+  dropdownMenu: { position: 'absolute', top: Platform.OS === 'ios' ? 100 : 60, right: 16, backgroundColor: '#1f2937', borderRadius: 12, padding: 8, width: 200, elevation: 5 },
   menuItem: { flexDirection: 'row', alignItems: 'center', padding: 12 },
   menuText: { color: '#e5e7eb', fontSize: 16, marginLeft: 12 },
   divider: { height: 1, backgroundColor: '#374151', marginVertical: 4 },
 
-  // 传输任务页面
   transferModal: { flex: 1, backgroundColor: '#111827' },
   transferHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', padding: 20, paddingTop: Platform.OS === 'ios' ? 60 : 20, backgroundColor: '#1f2937', borderBottomWidth: 1, borderBottomColor: '#374151' },
   transferTitle: { color: '#ffffff', fontSize: 18, fontWeight: 'bold' },
   closeText: { color: '#3b82f6', fontSize: 16 },
+  transferContent: { padding: 16 },
+  transferRow: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#1f2937', padding: 16, borderRadius: 12, marginBottom: 12 },
+  transferIconBox: { width: 40, height: 40, borderRadius: 20, backgroundColor: '#374151', justifyContent: 'center', alignItems: 'center', marginRight: 16 },
+  transferInfo: { flex: 1 },
+  transferName: { color: '#e5e7eb', fontSize: 16, fontWeight: '500', marginBottom: 4 },
+  transferStatus: { fontSize: 13, fontWeight: 'bold' },
 });
