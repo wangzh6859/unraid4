@@ -13,12 +13,11 @@ import VmDetailsScreen from './screens/VmDetailsScreen';
 import StorageDetailsScreen from './screens/StorageDetailsScreen';
 import SmartDetailsScreen from './screens/SmartDetailsScreen';
 import MediaScreen from './screens/MediaScreen';
+import FilesScreen from './screens/FilesScreen';
 
 const Tab = createBottomTabNavigator();
 const Stack = createNativeStackNavigator();
 
-// 临时占位文件页
-function FilesScreen() { return <View style={styles.container}><Text style={styles.text}>WebDAV 管理页面即将到来</Text></View>; }
 
 // 首页的堆栈路由
 function HomeStack() {
