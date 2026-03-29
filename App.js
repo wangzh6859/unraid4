@@ -12,7 +12,9 @@ import DockerDetailsScreen from './screens/DockerDetailsScreen';
 import VmDetailsScreen from './screens/VmDetailsScreen';
 import StorageDetailsScreen from './screens/StorageDetailsScreen';
 import SmartDetailsScreen from './screens/SmartDetailsScreen';
-import MediaScreen from './screens/MediaScreen';
+// 原来的 MediaScreen 可以先注释掉
+// import MediaScreen from './screens/MediaScreen';
+import MediaGridScreen from './screens/MediaGridScreen';
 import FilesScreen from './screens/FilesScreen';
 
 const Tab = createBottomTabNavigator();
@@ -60,7 +62,12 @@ export default function App() {
       >
         <Tab.Screen name="首页" component={HomeStack} options={{ headerShown: false }} />
         <Tab.Screen name="文件" component={FilesScreen} />
-        <Tab.Screen name="影音" component={MediaScreen} options={{ headerShown: false }} />
+        {/* 将原来的 MediaScreen 替换为新的 MediaGridScreen */}
+<Tab.Screen 
+  name="影音" 
+  component={MediaGridScreen} 
+  options={{ headerShown: false }} 
+/>
         <Tab.Screen name="设置" component={SettingsScreen} />
       </Tab.Navigator>
     </NavigationContainer>
