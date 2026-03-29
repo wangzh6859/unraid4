@@ -1,5 +1,5 @@
 import React, { useState, useCallback, useRef } from 'react';
-import { StyleSheet, Text, View, ScrollView, RefreshControl, Alert, TouchableOpacity } from 'react-native';
+import { StyleSheet, Text, View, ScrollView, RefreshControl, TouchableOpacity } from 'react-native';
 import { Cpu, Database, HardDrive, Box, Activity, Monitor, AlertCircle, Wifi, Zap } from 'lucide-react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useFocusEffect } from '@react-navigation/native';
@@ -9,7 +9,6 @@ export default function DashboardScreen({ navigation }) {
   const [refreshing, setRefreshing] = useState(false);
   const [serverStatus, setServerStatus] = useState('offline');
 
-  // 数据状态
   const [stats, setStats] = useState({ cpu: 0, memory: 0 });
   const [gpu, setGpu] = useState({ name: 'N/A', usage: 0 });
   const [storage, setStorage] = useState({ percentage: 0, total_used: 0, total_size: 0 });
@@ -26,18 +25,14 @@ export default function DashboardScreen({ navigation }) {
       if (!savedUrl || !savedToken) { setIsConfigured(false); return; }
       setIsConfigured(true);
 
-      // 加了超时机制防止请求无限挂起
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 5000);
-
-      const response = await fetch(`${savedUrl}/api.php?token=${savedToken}&action=status`, {
-        signal: controller.signal
-      });
+      const response = await fetch(`${savedUrl}/api.php?token=${savedToken}&action=status`, { signal: controller.signal });
       clearTimeout(timeoutId);
 
       const data = await response.json();
       
-      setServerStatus('online'); // 只要成功解析 JSON，就亮绿灯
+      setServerStatus('online');
       if (data.stats) setStats(data.stats);
       if (data.gpu) setGpu(data.gpu);
       if (data.storage) setStorage(data.storage);
@@ -57,10 +52,16 @@ export default function DashboardScreen({ navigation }) {
         prevNetwork.current = { rx: data.network.rx_bytes, tx: data.network.tx_bytes, time: now };
       }
     } catch (error) {
-      console.log('抓取失败:', error);
-      setServerStatus('offline'); // 失败亮红灯
+      setServerStatus('offline');
     }
   };
+
+  // 恢复下拉刷新功能
+  const onRefresh = useCallback(async () => {
+    setRefreshing(true);
+    await fetchServerData();
+    setRefreshing(false);
+  }, []);
 
   useFocusEffect(
     useCallback(() => {
@@ -88,8 +89,12 @@ export default function DashboardScreen({ navigation }) {
   }
 
   return (
-    <ScrollView style={styles.container} contentContainerStyle={styles.content}>
-      {/* 顶部标题与指示灯 */}
+    <ScrollView 
+      style={styles.container} 
+      contentContainerStyle={styles.content}
+      // 【修复】加上了被遗漏的下拉刷新组件
+      refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#60a5fa" />}
+    >
       <View style={styles.headerRow}>
         <View style={{ flexDirection: 'row', alignItems: 'center' }}>
           <View style={[styles.statusIndicator, { backgroundColor: serverStatus === 'online' ? '#10b981' : '#ef4444' }]} />
@@ -97,21 +102,7 @@ export default function DashboardScreen({ navigation }) {
         </View>
       </View>
 
-      {/* 四宫格数据区：GPU / 网络 */}
-      <View style={styles.gridRow}>
-        <View style={[styles.card, styles.gridCard, { marginRight: 8 }]}>
-          <View style={styles.cardHeader}><Zap color="#a855f7" size={20} /><Text style={styles.cardTitle}>GPU</Text></View>
-          <Text style={styles.mainNumber}>{gpu.usage}%</Text>
-          <Text style={styles.subText} numberOfLines={1}>{gpu.name}</Text>
-        </View>
-        <View style={[styles.card, styles.gridCard, { marginLeft: 8 }]}>
-          <View style={styles.cardHeader}><Wifi color="#3b82f6" size={20} /><Text style={styles.cardTitle}>网络</Text></View>
-          <Text style={styles.subText}>↓ {netSpeed.down > 1024 ? (netSpeed.down/1024).toFixed(1) + ' MB/s' : netSpeed.down + ' KB/s'}</Text>
-          <Text style={styles.subText}>↑ {netSpeed.up > 1024 ? (netSpeed.up/1024).toFixed(1) + ' MB/s' : netSpeed.up + ' KB/s'}</Text>
-        </View>
-      </View>
-
-      {/* 四宫格数据区：CPU / 内存 (全新方块设计) */}
+      {/* 第一排：CPU (左) | GPU (右) */}
       <View style={styles.gridRow}>
         <View style={[styles.card, styles.gridCard, { marginRight: 8 }]}>
           <View style={styles.cardHeader}><Cpu color="#f59e0b" size={20} /><Text style={styles.cardTitle}>CPU</Text></View>
@@ -121,24 +112,38 @@ export default function DashboardScreen({ navigation }) {
           </View>
         </View>
         <View style={[styles.card, styles.gridCard, { marginLeft: 8 }]}>
+          <View style={styles.cardHeader}><Zap color="#a855f7" size={20} /><Text style={styles.cardTitle}>GPU</Text></View>
+          <Text style={styles.mainNumber}>{gpu.usage}%</Text>
+          <Text style={styles.subText} numberOfLines={1}>{gpu.name}</Text>
+        </View>
+      </View>
+
+      {/* 第二排：内存 (左) | 网络 (右) */}
+      <View style={styles.gridRow}>
+        <View style={[styles.card, styles.gridCard, { marginRight: 8 }]}>
           <View style={styles.cardHeader}><Database color="#10b981" size={20} /><Text style={styles.cardTitle}>内存</Text></View>
           <Text style={styles.mainNumber}>{stats.memory}%</Text>
           <View style={styles.miniTrack}>
             <View style={[styles.miniBar, { width: `${stats.memory}%`, backgroundColor: stats.memory > 80 ? '#ef4444' : '#10b981' }]} />
           </View>
         </View>
+        <View style={[styles.card, styles.gridCard, { marginLeft: 8 }]}>
+          <View style={styles.cardHeader}><Wifi color="#3b82f6" size={20} /><Text style={styles.cardTitle}>网络</Text></View>
+          <Text style={styles.subText}>↓ {netSpeed.down > 1024 ? (netSpeed.down/1024).toFixed(1) + ' MB/s' : netSpeed.down + ' KB/s'}</Text>
+          <Text style={styles.subText}>↑ {netSpeed.up > 1024 ? (netSpeed.up/1024).toFixed(1) + ' MB/s' : netSpeed.up + ' KB/s'}</Text>
+        </View>
       </View>
 
       {/* 阵列存储 */}
-      <TouchableOpacity style={styles.card} onPress={() => Alert.alert('提示', '即将进入存储详情页')}>
+      <TouchableOpacity style={styles.card}>
         <View style={styles.cardHeader}><HardDrive color="#10b981" size={24} /><Text style={styles.cardTitle}>阵列存储</Text></View>
         <Text style={styles.mainNumber}>{storage.percentage}%</Text>
         <Text style={styles.subText}>已用 {formatBytes(storage.total_used)} / 总共 {formatBytes(storage.total_size)}</Text>
         <View style={[styles.track, { marginTop: 12 }]}><View style={[styles.bar, { width: `${storage.percentage}%`, backgroundColor: storage.percentage > 80 ? '#ef4444' : '#10b981' }]} /></View>
       </TouchableOpacity>
 
-      {/* Docker 容器 */}
-      <TouchableOpacity style={styles.card} onPress={() => Alert.alert('提示', '即将进入 Docker 详情页')}>
+      {/* Docker 容器 (加入真实跳转逻辑) */}
+      <TouchableOpacity style={styles.card} onPress={() => navigation.navigate('Docker详情')}>
         <View style={styles.cardHeader}><Box color="#3b82f6" size={24} /><Text style={styles.cardTitle}>Docker 容器</Text></View>
         <View style={styles.summaryRow}>
           <Text style={styles.summaryText}>运行中: <Text style={{ color: '#10b981', fontWeight: 'bold' }}>{dockers.running}</Text></Text>
@@ -146,8 +151,8 @@ export default function DashboardScreen({ navigation }) {
         </View>
       </TouchableOpacity>
 
-      {/* 虚拟机 */}
-      <TouchableOpacity style={styles.card} onPress={() => Alert.alert('提示', '即将进入 VM 详情页')}>
+      {/* 虚拟机 (加入真实跳转逻辑) */}
+      <TouchableOpacity style={styles.card} onPress={() => navigation.navigate('VM详情')}>
         <View style={styles.cardHeader}><Monitor color="#ec4899" size={24} /><Text style={styles.cardTitle}>虚拟机 (VM)</Text></View>
         <View style={styles.summaryRow}>
           <Text style={styles.summaryText}>运行中: <Text style={{ color: '#10b981', fontWeight: 'bold' }}>{vms.running}</Text></Text>
