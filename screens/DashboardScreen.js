@@ -1,28 +1,40 @@
 import React, { useState, useCallback, useRef } from 'react';
-import { StyleSheet, Text, View, ScrollView, RefreshControl, TouchableOpacity } from 'react-native';
-import { Cpu, Database, HardDrive, Box, Activity, Monitor, AlertCircle, Wifi, Zap } from 'lucide-react-native';
+import { StyleSheet, Text, View, ScrollView, RefreshControl, TouchableOpacity, TextInput, ActivityIndicator, KeyboardAvoidingView, Platform, Alert } from 'react-native';
+import { Cpu, Database, HardDrive, Box, Activity, Monitor, AlertCircle, Wifi, Zap, Server, Key } from 'lucide-react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useFocusEffect } from '@react-navigation/native';
 
 export default function DashboardScreen({ navigation }) {
+  // 核心状态：是否已配置 Unraid 信息
   const [isConfigured, setIsConfigured] = useState(true);
+  
+  // 登录表单状态
+  const [inputUrl, setInputUrl] = useState('');
+  const [inputToken, setInputToken] = useState('');
+  const [isTesting, setIsTesting] = useState(false);
+
+  // 仪表盘状态
   const [refreshing, setRefreshing] = useState(false);
   const [serverStatus, setServerStatus] = useState('offline');
-
   const [stats, setStats] = useState({ cpu: 0, memory: 0 });
   const [gpu, setGpu] = useState({ name: 'N/A', usage: 0 });
   const [storage, setStorage] = useState({ percentage: 0, total_used: 0, total_size: 0 });
   const [dockers, setDockers] = useState({ running: 0, total: 0, list: [] });
   const [vms, setVms] = useState({ running: 0, total: 0, list: [] });
-  
   const prevNetwork = useRef({ rx: 0, tx: 0, time: 0 });
   const [netSpeed, setNetSpeed] = useState({ down: 0, up: 0 });
 
+  // 💡 核心检查逻辑
   const fetchServerData = async () => {
     try {
       const savedUrl = await AsyncStorage.getItem('@server_url');
       const savedToken = await AsyncStorage.getItem('@api_token');
-      if (!savedUrl || !savedToken) { setIsConfigured(false); return; }
+      
+      // 如果没有钥匙，立刻显示配置表单！
+      if (!savedUrl || !savedToken) { 
+        setIsConfigured(false); 
+        return; 
+      }
       setIsConfigured(true);
 
       const controller = new AbortController();
@@ -31,14 +43,12 @@ export default function DashboardScreen({ navigation }) {
       clearTimeout(timeoutId);
 
       const data = await response.json();
-      
       setServerStatus('online');
       if (data.stats) setStats(data.stats);
       if (data.gpu) setGpu(data.gpu);
       if (data.storage) setStorage(data.storage);
       if (data.dockers) setDockers(data.dockers);
       if (data.vms) setVms(data.vms);
-
       if (data.network) {
         const now = Date.now();
         if (prevNetwork.current.time > 0) {
@@ -56,7 +66,6 @@ export default function DashboardScreen({ navigation }) {
     }
   };
 
-  // 恢复下拉刷新功能
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
     await fetchServerData();
@@ -79,20 +88,87 @@ export default function DashboardScreen({ navigation }) {
     return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
   };
 
+  // 💡 新增：处理登录并保存配置
+  const handleSaveConfig = async () => {
+    if (!inputUrl || !inputToken) {
+      Alert.alert('提示', '请完整填写服务器地址和 API Token');
+      return;
+    }
+    
+    let cleanUrl = inputUrl.trim();
+    if (!cleanUrl.startsWith('http')) cleanUrl = 'http://' + cleanUrl;
+    if (cleanUrl.endsWith('/')) cleanUrl = cleanUrl.slice(0, -1);
+    
+    setIsTesting(true);
+    try {
+      const response = await fetch(`${cleanUrl}/api.php?token=${inputToken.trim()}&action=status`);
+      if (response.ok) {
+        await AsyncStorage.setItem('@server_url', cleanUrl);
+        await AsyncStorage.setItem('@api_token', inputToken.trim());
+        Alert.alert('连接成功', '已接入 Unraid 服务器！');
+        setIsConfigured(true);
+        fetchServerData(); // 立刻拉取数据
+      } else {
+        Alert.alert('连接失败', '服务器无响应或 Token 错误');
+      }
+    } catch (error) {
+      Alert.alert('网络错误', '无法连接到指定的服务器地址');
+    } finally {
+      setIsTesting(false);
+    }
+  };
+
+  // ==========================================
+  // 状态 A：未配置时，渲染登录表单
+  // ==========================================
   if (!isConfigured) {
     return (
-      <View style={[styles.container, { justifyContent: 'center', alignItems: 'center' }]}>
-        <AlertCircle color="#9ca3af" size={64} style={{ marginBottom: 20 }} />
-        <Text style={{ color: '#ffffff', fontSize: 20, fontWeight: 'bold' }}>未配置服务器</Text>
-      </View>
+      <KeyboardAvoidingView style={styles.center} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
+        <View style={styles.setupCard}>
+          <Server color="#3b82f6" size={48} style={{ alignSelf: 'center', marginBottom: 16 }} />
+          <Text style={styles.setupTitle}>连接 Unraid</Text>
+          <Text style={styles.setupSub}>请输入主服务器的 API 访问凭证</Text>
+          
+          <View style={styles.inputContainer}>
+            <Server color="#9ca3af" size={20} style={styles.inputIcon} />
+            <TextInput 
+              style={styles.input} 
+              placeholder="http://192.168.x.x" 
+              placeholderTextColor="#6b7280" 
+              value={inputUrl} 
+              onChangeText={setInputUrl} 
+              autoCapitalize="none" 
+              keyboardType="url" 
+            />
+          </View>
+
+          <View style={styles.inputContainer}>
+            <Key color="#9ca3af" size={20} style={styles.inputIcon} />
+            <TextInput 
+              style={styles.input} 
+              placeholder="API Token 密钥" 
+              placeholderTextColor="#6b7280" 
+              value={inputToken} 
+              onChangeText={setInputToken} 
+              secureTextEntry={true} 
+            />
+          </View>
+
+          <TouchableOpacity style={styles.saveBtn} onPress={handleSaveConfig} disabled={isTesting}>
+            {isTesting ? <ActivityIndicator color="#ffffff" /> : <Text style={styles.saveBtnText}>接入控制台</Text>}
+          </TouchableOpacity>
+        </View>
+      </KeyboardAvoidingView>
     );
   }
 
+  // ==========================================
+  // 状态 B：已配置时，渲染仪表盘
+  // ==========================================
   return (
     <ScrollView 
       style={styles.container} 
       contentContainerStyle={styles.content}
-      // 【修复】加上了被遗漏的下拉刷新组件
       refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#60a5fa" />}
     >
       <View style={styles.headerRow}>
@@ -102,7 +178,6 @@ export default function DashboardScreen({ navigation }) {
         </View>
       </View>
 
-      {/* 第一排：CPU (左) | GPU (右) */}
       <View style={styles.gridRow}>
         <View style={[styles.card, styles.gridCard, { marginRight: 8 }]}>
           <View style={styles.cardHeader}><Cpu color="#f59e0b" size={20} /><Text style={styles.cardTitle}>CPU</Text></View>
@@ -118,7 +193,6 @@ export default function DashboardScreen({ navigation }) {
         </View>
       </View>
 
-      {/* 第二排：内存 (左) | 网络 (右) */}
       <View style={styles.gridRow}>
         <View style={[styles.card, styles.gridCard, { marginRight: 8 }]}>
           <View style={styles.cardHeader}><Database color="#10b981" size={20} /><Text style={styles.cardTitle}>内存</Text></View>
@@ -134,7 +208,6 @@ export default function DashboardScreen({ navigation }) {
         </View>
       </View>
 
-      {/* 阵列存储 */}
       <TouchableOpacity style={styles.card} onPress={() => navigation.navigate('存储详情')}>
         <View style={styles.cardHeader}><HardDrive color="#10b981" size={24} /><Text style={styles.cardTitle}>阵列存储</Text></View>
         <Text style={styles.mainNumber}>{storage.percentage}%</Text>
@@ -142,7 +215,6 @@ export default function DashboardScreen({ navigation }) {
         <View style={[styles.track, { marginTop: 12 }]}><View style={[styles.bar, { width: `${storage.percentage}%`, backgroundColor: storage.percentage > 80 ? '#ef4444' : '#10b981' }]} /></View>
       </TouchableOpacity>
 
-      {/* Docker 容器 (加入真实跳转逻辑) */}
       <TouchableOpacity style={styles.card} onPress={() => navigation.navigate('Docker详情')}>
         <View style={styles.cardHeader}><Box color="#3b82f6" size={24} /><Text style={styles.cardTitle}>Docker 容器</Text></View>
         <View style={styles.summaryRow}>
@@ -151,7 +223,6 @@ export default function DashboardScreen({ navigation }) {
         </View>
       </TouchableOpacity>
 
-      {/* 虚拟机 (加入真实跳转逻辑) */}
       <TouchableOpacity style={styles.card} onPress={() => navigation.navigate('VM详情')}>
         <View style={styles.cardHeader}><Monitor color="#ec4899" size={24} /><Text style={styles.cardTitle}>虚拟机 (VM)</Text></View>
         <View style={styles.summaryRow}>
@@ -164,6 +235,16 @@ export default function DashboardScreen({ navigation }) {
 }
 
 const styles = StyleSheet.create({
+  center: { flex: 1, backgroundColor: '#111827', justifyContent: 'center', padding: 20 },
+  setupCard: { backgroundColor: '#1f2937', borderRadius: 16, padding: 24, elevation: 5 },
+  setupTitle: { color: '#ffffff', fontSize: 22, fontWeight: 'bold', textAlign: 'center', marginBottom: 8 },
+  setupSub: { color: '#9ca3af', fontSize: 13, textAlign: 'center', marginBottom: 24 },
+  inputContainer: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#374151', borderRadius: 8, marginBottom: 16, paddingHorizontal: 12 },
+  inputIcon: { marginRight: 10 },
+  input: { flex: 1, color: '#ffffff', height: 50, fontSize: 16 },
+  saveBtn: { backgroundColor: '#3b82f6', height: 50, borderRadius: 8, justifyContent: 'center', alignItems: 'center', marginTop: 10 },
+  saveBtnText: { color: '#ffffff', fontSize: 18, fontWeight: 'bold' },
+
   container: { flex: 1, backgroundColor: '#111827' },
   content: { padding: 16, paddingBottom: 40, paddingTop: 40 },
   headerRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 24, paddingHorizontal: 4 },
