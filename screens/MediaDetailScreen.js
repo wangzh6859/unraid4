@@ -158,10 +158,11 @@ export default function MediaDetailScreen({ route, navigation }) {
     }
   };
 
-  // 💡 终极绝杀：底层 Intent 意图唤醒 (彻底屏蔽浏览器下载)
+  // 💡 终极硬核唤醒引擎：绕过 URL 拦截，直接操控系统底层 Intent
   const handleExternalPlay = async () => {
     if (!activeVideoUrl) return;
     
+    // 生成带 Basic Auth 认证的直链
     const safeUser = encodeURIComponent(username);
     const safePass = encodeURIComponent(password);
     const cleanOrigin = davOrigin.replace(/^https?:\/\//, '');
@@ -178,15 +179,12 @@ export default function MediaDetailScreen({ route, navigation }) {
           onPress: async () => {
             if (Platform.OS === 'android') {
               try {
-                // 🔥 真正的底层魔法：直接命令 Android 启动一个 VIEW 动作
-                // 强制将数据声明为 fullUrl，强制类型声明为 video/*
-                // 这样写，Android 底层的 setDataAndType 会被触发，浏览器绝对无法接管！
+                // 强制要求系统调出所有能放 video/* 的软件让你选
                 await IntentLauncher.startActivityAsync('android.intent.action.VIEW', {
                   data: fullUrl,
                   type: 'video/*',
                 });
               } catch (e) {
-                // 如果极其罕见地失败了，再用 Linking 兜底
                 Linking.openURL(fullUrl);
               }
             } else {
@@ -196,14 +194,27 @@ export default function MediaDetailScreen({ route, navigation }) {
         },
         { 
           text: 'MX Player', 
-          onPress: () => {
+          onPress: async () => {
             if (Platform.OS === 'android') {
-              // 强行把视频塞进 MX Player 的嘴里
-              const mxIntent = `intent:${fullUrl}#Intent;package=com.mxtech.videoplayer.ad;action=android.intent.action.VIEW;type=video/*;end`;
-              Linking.openURL(mxIntent).catch(() => {
-                const mxProIntent = `intent:${fullUrl}#Intent;package=com.mxtech.videoplayer.pro;action=android.intent.action.VIEW;type=video/*;end`;
-                Linking.openURL(mxProIntent).catch(() => Alert.alert('提示', '未安装 MX Player'));
-              });
+              try {
+                // 🔥 暴力狙击 1：强行塞给 MX Player 免费版
+                await IntentLauncher.startActivityAsync('android.intent.action.VIEW', {
+                  data: fullUrl,
+                  type: 'video/*',
+                  packageName: 'com.mxtech.videoplayer.ad' 
+                });
+              } catch (e1) {
+                try {
+                  // 🔥 暴力狙击 2：如果免费版失败，尝试强行塞给 MX Player 专业版
+                  await IntentLauncher.startActivityAsync('android.intent.action.VIEW', {
+                    data: fullUrl,
+                    type: 'video/*',
+                    packageName: 'com.mxtech.videoplayer.pro'
+                  });
+                } catch (e2) {
+                  Alert.alert('提示', '系统拦截或未检测到 MX Player，请尝试【系统自由选择】手动点选。');
+                }
+              }
             } else {
               Alert.alert('提示', 'MX Player 仅限 Android');
             }
