@@ -192,41 +192,6 @@ export default function MediaDetailScreen({ route, navigation }) {
             }
           }
         },
-        { 
-          text: 'MX Player', 
-          onPress: async () => {
-            if (Platform.OS === 'android') {
-              try {
-                // 🔥 暴力狙击 1：强行塞给 MX Player 免费版
-                await IntentLauncher.startActivityAsync('android.intent.action.VIEW', {
-                  data: fullUrl,
-                  type: 'video/*',
-                  packageName: 'com.mxtech.videoplayer.ad' 
-                });
-              } catch (e1) {
-                try {
-                  // 🔥 暴力狙击 2：如果免费版失败，尝试强行塞给 MX Player 专业版
-                  await IntentLauncher.startActivityAsync('android.intent.action.VIEW', {
-                    data: fullUrl,
-                    type: 'video/*',
-                    packageName: 'com.mxtech.videoplayer.pro'
-                  });
-                } catch (e2) {
-                  Alert.alert('提示', '系统拦截或未检测到 MX Player，请尝试【系统自由选择】手动点选。');
-                }
-              }
-            } else {
-              Alert.alert('提示', 'MX Player 仅限 Android');
-            }
-          }
-        },
-        { 
-          text: 'VLC Player', 
-          onPress: () => {
-            const vlcUrl = fullUrl.replace(/^https?:\/\//, 'vlc://');
-            Linking.openURL(vlcUrl).catch(() => Alert.alert('提示', '未安装 VLC Player'));
-          }
-        },
         { text: '取消', style: 'cancel' }
       ]
     );
