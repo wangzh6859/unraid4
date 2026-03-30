@@ -136,7 +136,7 @@ export default function MediaDetailScreen({ route, navigation }) {
     else Alert.alert('提示', '未找到可播放的视频源');
   };
 
-  // 💡 极其硬核的第三方播放器唤醒引擎
+  // 💡 极其硬核的第三方播放器唤醒引擎 (已适配 MX Player 与防浏览器下载)
   const handleExternalPlay = async () => {
     if (!activeVideoUrl) return;
     
@@ -150,29 +150,46 @@ export default function MediaDetailScreen({ route, navigation }) {
 
     Alert.alert(
       '选择外部播放器',
-      '请选择您设备上已安装的专业播放器：',
+      '请选择您要唤醒的播放器：',
       [
         { 
           text: 'VLC Player', 
           onPress: () => {
             // VLC 专属协议唤醒
             const vlcUrl = fullUrl.replace(/^https?:\/\//, 'vlc://');
-            Linking.openURL(vlcUrl).catch(() => Alert.alert('提示', '您的设备似乎没有安装 VLC 播放器'));
+            Linking.openURL(vlcUrl).catch(() => Alert.alert('提示', '未安装 VLC 播放器'));
           }
         },
         { 
-          text: 'Infuse (iOS/Mac)', 
+          text: 'MX Player (安卓专属)', 
           onPress: () => {
-            // Infuse 专属协议唤醒
-            const infuseUrl = `infuse://x-callback-url/play?url=${encodeURIComponent(fullUrl)}`;
-            Linking.openURL(infuseUrl).catch(() => Alert.alert('提示', '您的设备似乎没有安装 Infuse 播放器'));
+            if (Platform.OS === 'android') {
+              // 强制唤醒 MX Player 免费版
+              const mxIntent = `intent:${fullUrl}#Intent;package=com.mxtech.videoplayer.ad;action=android.intent.action.VIEW;type=video/*;end`;
+              Linking.openURL(mxIntent).catch(() => {
+                // 如果没有免费版，尝试唤醒 MX Player Pro 专业版
+                const mxProIntent = `intent:${fullUrl}#Intent;package=com.mxtech.videoplayer.pro;action=android.intent.action.VIEW;type=video/*;end`;
+                Linking.openURL(mxProIntent).catch(() => Alert.alert('提示', '未安装 MX Player'));
+              });
+            } else {
+              Alert.alert('提示', 'MX Player 唤醒主要支持 Android 设备');
+            }
           }
         },
         { 
-          text: '系统默认 / 其它播放器', 
+          text: '自由选择播放器', 
           onPress: () => {
-            // 交给操作系统去寻找能打开该视频流的 App（例如 Android 的 MX Player 会在这个时候响应）
-            Linking.openURL(fullUrl).catch(() => Alert.alert('提示', '无法调用系统播放器'));
+            if (Platform.OS === 'android') {
+              // 💡 核心魔法：强制指定 type=video/*，安卓系统会弹出一个只包含视频播放器的选择框，彻底屏蔽浏览器下载！
+              const intentUrl = `intent:${fullUrl}#Intent;action=android.intent.action.VIEW;type=video/*;end`;
+              Linking.openURL(intentUrl).catch(() => {
+                 // 如果 intent 失败，作为最后的兜底
+                 Linking.openURL(fullUrl);
+              });
+            } else {
+              // iOS 的 Safari 默认就是原生全屏播放视频，不会下载
+              Linking.openURL(fullUrl);
+            }
           }
         },
         { text: '取消', style: 'cancel' }
