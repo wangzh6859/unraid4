@@ -320,7 +320,7 @@ export default function MediaGridScreen({ navigation }) {
             </>
           }
           renderItem={({ item }) => (
-            <TouchableOpacity style={styles.posterCard} onPress={() => Alert.alert('提示', '即将开启播放器页面...')}>
+            <TouchableOpacity style={styles.posterCard} onPress={() => navigation.navigate('MediaDetail', { movie: item })}>
               <View style={styles.posterShadow}>
                 {item.posterUrl ? <Image source={{ uri: item.posterUrl, headers: { 'Authorization': `Basic ${base64.encode(`${username}:${password}`)}` } }} style={styles.posterImage} /> : <View style={[styles.posterImage, styles.fullCenter]}><Film color="#4b5563" size={32} /></View>}
               </View>

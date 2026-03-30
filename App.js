@@ -15,6 +15,7 @@ import SmartDetailsScreen from './screens/SmartDetailsScreen';
 // 原来的 MediaScreen 可以先注释掉
 // import MediaScreen from './screens/MediaScreen';
 import MediaGridScreen from './screens/MediaGridScreen';
+import MediaDetailScreen from './screens/MediaDetailScreen';
 import FilesScreen from './screens/FilesScreen';
 
 const Tab = createBottomTabNavigator();
@@ -36,6 +37,7 @@ function HomeStack() {
       <Stack.Screen name="VM详情" component={VmDetailsScreen} options={{ title: '虚拟机' }} />
       <Stack.Screen name="存储详情" component={StorageDetailsScreen} options={{ title: '磁盘存储详情' }} />
       <Stack.Screen name="SMART详情" component={SmartDetailsScreen} options={{ title: 'S.M.A.R.T. 诊断' }} />
+      <Stack.Screen name="MediaDetail" component={MediaDetailScreen} options={{ headerShown: false }} />
     </Stack.Navigator>
   );
 }
