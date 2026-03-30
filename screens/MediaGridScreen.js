@@ -3,11 +3,14 @@ import { StyleSheet, Text, View, TouchableOpacity, ActivityIndicator, FlatList, 
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { XMLParser } from 'fast-xml-parser';
 import base64 from 'base-64';
-import { PlayCircle, RefreshCw, Film, Server, User, Key, Plus, FolderHeart, LogOut, Folder, ChevronRight, CheckCircle2, X, Search, Clock } from 'lucide-react-native';
+import { PlayCircle, RefreshCw, Film, Server, User, Key, Plus, FolderHeart, LogOut, Folder, ChevronRight, CheckCircle2, X, Search, Clock, Ban } from 'lucide-react-native';
 
 const { width } = Dimensions.get('window');
 const POSTER_WIDTH = (width - 48) / 3; 
 const POSTER_HEIGHT = POSTER_WIDTH * 1.5; 
+
+// 💡 100MB 字节阀值
+const MIN_VIDEO_SIZE = 100 * 1024 * 1024; 
 
 export default function MediaGridScreen({ navigation }) {
   const [isConfigured, setIsConfigured] = useState(false);
@@ -117,13 +120,20 @@ export default function MediaGridScreen({ navigation }) {
     fetchBrowserFolders(browserPath.replace(/\/$/, '').split('/').slice(0, -1).join('/') + '/');
   };
 
-  const handleSaveLibrary = async () => {
+  // 💡 保存媒体库逻辑 (支持包含或排除)
+  const handleSaveLibrary = async (isExclude = false) => {
     let updatedLibs = [...libraries];
     if (browserMode === 'create') {
       if (!newLibName.trim()) return Alert.alert('提示', '请输入名称');
-      updatedLibs.push({ id: Date.now().toString(), name: newLibName.trim(), type: newLibType, paths: [browserPath] });
+      updatedLibs.push({ id: Date.now().toString(), name: newLibName.trim(), type: newLibType, paths: [browserPath], excludes: [] });
     } else {
-      updatedLibs = updatedLibs.map(l => l.id === targetLibId ? { ...l, paths: [...new Set([...l.paths, browserPath])] } : l);
+      updatedLibs = updatedLibs.map(l => {
+        if (l.id === targetLibId) {
+          if (isExclude) return { ...l, excludes: [...new Set([...(l.excludes||[]), browserPath])] };
+          return { ...l, paths: [...new Set([...l.paths, browserPath])] };
+        }
+        return l;
+      });
     }
     setLibraries(updatedLibs);
     await AsyncStorage.setItem('@media_libraries', JSON.stringify(updatedLibs));
@@ -131,7 +141,7 @@ export default function MediaGridScreen({ navigation }) {
   };
 
   const deleteLib = (id) => {
-    Alert.alert('删除媒体库', '确定要移除此分类吗？(不删源文件)', [
+    Alert.alert('删除媒体库', '确定要移除此分类吗？', [
       { text: '取消' }, { text: '删除', style: 'destructive', onPress: async () => {
           const updated = libraries.filter(l => l.id !== id);
           setLibraries(updated); await AsyncStorage.setItem('@media_libraries', JSON.stringify(updated));
@@ -142,27 +152,15 @@ export default function MediaGridScreen({ navigation }) {
     ]);
   };
 
-  // ==========================================
-  // 🎬 NFO解析器强化版 (全面兼容电视剧和电影)
-  // ==========================================
   const parseNfo = (xmlData) => {
     try {
-      const parser = new XMLParser({ ignoreAttributes: true });
-      const result = parser.parse(xmlData);
-      // 兼容 tvshow (剧集) 和 movie (电影)
+      const result = new XMLParser({ ignoreAttributes: true }).parse(xmlData);
       const meta = result.tvshow || result.movie || result.video || result.episodedetails || {};
-      return { 
-          title: meta.title || meta.originaltitle || '未知标题', 
-          plot: meta.plot || '暂无简介', 
-          year: meta.year || '', 
-          rating: meta.rating || meta.userrating || '0.0' 
-      };
+      return { title: meta.title || meta.originaltitle || '未知标题', plot: meta.plot || '暂无简介', year: meta.year || '', rating: meta.rating || meta.userrating || '0.0' };
     } catch (e) { return { title: '解析失败', plot: '', year: '', rating: '0.0' }; }
   };
 
-  // ==========================================
-  // 🧠 智能刮削引擎 (彻底修复 Season 1 问题)
-  // ==========================================
+  // 💡 智能刮削引擎
   const startScan = async (libsToScan = libraries) => {
     if (isScanning || !libsToScan.length) return;
     setIsScanning(true); let results = [];
@@ -173,9 +171,15 @@ export default function MediaGridScreen({ navigation }) {
     try {
       for (const lib of libsToScan) {
         let queue = [...lib.paths];
+        const excludes = lib.excludes || []; // 获取当前库的排除目录
+
         while (queue.length > 0) {
           const currentPath = queue.shift();
           const path = currentPath.endsWith('/') ? currentPath : currentPath + '/';
+          
+          // 💡 检查是否在排除名单中
+          if (excludes.some(ex => path.startsWith(ex))) continue;
+
           setScanProgress(`${lib.name}: ${decodeURIComponent(path).split('/').filter(Boolean).pop() || '...'}`);
           
           try {
@@ -183,56 +187,42 @@ export default function MediaGridScreen({ navigation }) {
             let items = parser.parse(await res.text())?.multistatus?.response || [];
             if (!Array.isArray(items)) items = [items];
 
-            // 💡 1. 寻找 NFO 文件，这是判断“这是一个影视总目录”的绝对依据！
             let nfoItem = items.find(i => i.href.toLowerCase().endsWith('.nfo'));
             
             if (nfoItem) {
-              // 👉 如果有 NFO，说明这就是一个剧集/电影的整体（比如 "绝命毒师" 文件夹）
-              let movie = { 
-                id: `${lib.id}-${results.length}`, libraryId: lib.id, type: lib.type,
-                title: decodeURIComponent(path.split('/').filter(Boolean).pop() || '未知'),
-                path: path, // 保存这个根目录路径，未来点进去再加载 Season 和 Episode
-                videoUrl: null, posterUrl: null, nfo: null
-              };
-              
-              // 抓取并解析 NFO 里的真实剧名
+              let movie = { id: `${lib.id}-${results.length}`, libraryId: lib.id, type: lib.type, title: decodeURIComponent(path.split('/').filter(Boolean).pop() || '未知'), path: path, videoUrl: null, posterUrl: null, nfo: null };
               try {
                 const nfoRes = await fetch(origin + nfoItem.href, { headers: { 'Authorization': auth }});
                 movie.nfo = parseNfo(await nfoRes.text());
                 if (movie.nfo.title && movie.nfo.title !== '未知标题') movie.title = movie.nfo.title;
               } catch(e){}
-
-              // 抓取这个总目录下的封面
               items.forEach(i => {
                 const h = i.href.toLowerCase();
                 if ((h.includes('poster')||h.includes('folder')||h.includes('cover')) && /\.(jpg|jpeg|png|webp)$/i.test(h)) movie.posterUrl = origin + i.href;
               });
-              
               results.push(movie);
-              // 🚫 核心修复：不再将它里面的子文件夹（如 Season 1）加入队列！保证首页干净！
             } else {
-              // 👉 2. 如果没有 NFO，说明这只是个普通文件夹
-              // 检查里面有没有散落的单独视频文件 (处理没有刮削的杂乱视频)
-              let videos = items.filter(i => /\.(mkv|mp4|avi|iso|ts|rmvb)$/i.test(i.href));
-              videos.forEach(v => {
-                let filename = decodeURIComponent(v.href.split('/').pop());
-                let title = filename.replace(/\.(mkv|mp4|avi|iso|ts|rmvb)$/i, '');
-                let movie = {
-                  id: `${lib.id}-${results.length}`, libraryId: lib.id, type: lib.type,
-                  title: title, path: path, videoUrl: origin + v.href, posterUrl: null, nfo: null
-                };
-                results.push(movie);
+              // 💡 找视频文件并过滤掉小于 100MB 的花絮
+              let videos = items.filter(i => {
+                if (!/\.(mkv|mp4|avi|iso|ts|rmvb|m2ts|vob|mov|webm)$/i.test(i.href)) return false;
+                const size = Number(i.propstat?.prop?.getcontentlength || 0);
+                return size >= MIN_VIDEO_SIZE; // 大于 100MB 才算正片
               });
 
-              // 👉 3. 把里面的子文件夹加入队列，继续深入挖掘寻找含有 NFO 的影视库
+              videos.forEach(v => {
+                let title = decodeURIComponent(v.href.split('/').pop()).replace(/\.(mkv|mp4|avi|iso|ts|rmvb|m2ts|vob|mov|webm)$/i, '');
+                results.push({ id: `${lib.id}-${results.length}`, libraryId: lib.id, type: lib.type, title: title, path: path, videoUrl: origin + v.href, posterUrl: null, nfo: null });
+              });
+
               items.forEach(i => {
                 const h = i.href.replace(/https?:\/\/[^\/]+/, '');
                 if (i.propstat?.prop?.resourcetype?.collection === '' && h !== path && h !== path.slice(0,-1)) {
-                  queue.push(h.endsWith('/') ? h : h+'/');
+                  // 把子目录加入队列前，也要检查是否在排除名单里
+                  if (!excludes.some(ex => h.startsWith(ex))) queue.push(h.endsWith('/') ? h : h+'/');
                 }
               });
             }
-            await new Promise(r => setTimeout(r, 10)); // 防爆缓冲
+            await new Promise(r => setTimeout(r, 10)); 
           } catch (e) {}
         }
       }
@@ -302,37 +292,22 @@ export default function MediaGridScreen({ navigation }) {
           numColumns={3}
           ListHeaderComponent={
             <>
-              {/* 🚀 这里是刚才遗漏的“继续观看”模块 */}
-              {continueWatching.length > 0 && !isSearching && (
+              {!isSearching && continueWatching.length > 0 && (
                 <View style={{ marginTop: 10, marginBottom: 5 }}>
                   <View style={{ flexDirection: 'row', alignItems: 'center', marginLeft: 16, marginBottom: 12 }}>
-                    <Clock color="#f59e0b" size={18} />
-                    <Text style={{ color: '#ffffff', fontSize: 16, fontWeight: 'bold', marginLeft: 6 }}>继续观看</Text>
+                    <Clock color="#f59e0b" size={18} /><Text style={{ color: '#ffffff', fontSize: 16, fontWeight: 'bold', marginLeft: 6 }}>继续观看</Text>
                   </View>
                   <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ paddingLeft: 16 }}>
                     {continueWatching.map((item, idx) => (
-                      <TouchableOpacity 
-                        key={idx} 
-                        style={{ width: 140, marginRight: 12 }} 
-                        // 点击历史记录，带着进度信息直接杀回详情页
-                        onPress={() => navigation.navigate('MediaDetail', { movie: item })}
-                      >
-                        {/* 注意这里加上了 Auth 验证，否则海报加载不出来 */}
-                        <Image 
-                          source={{ uri: item.posterUrl, headers: { 'Authorization': `Basic ${base64.encode(`${username}:${password}`)}` } }} 
-                          style={{ width: 140, height: 80, borderRadius: 8, backgroundColor: '#374151' }} 
-                        />
-                        {/* 进度条 */}
-                        <View style={{ height: 3, backgroundColor: '#374151', width: '100%', marginTop: 4, borderRadius: 2, overflow: 'hidden' }}>
-                          <View style={{ height: '100%', backgroundColor: '#f59e0b', width: `${item.percent}%` }} />
-                        </View>
+                      <TouchableOpacity key={idx} style={{ width: 140, marginRight: 12 }} onPress={() => navigation.navigate('MediaDetail', { movie: item })}>
+                        <Image source={{ uri: item.posterUrl, headers: { 'Authorization': `Basic ${base64.encode(`${username}:${password}`)}` } }} style={{ width: 140, height: 80, borderRadius: 8, backgroundColor: '#374151' }} />
+                        <View style={{ height: 3, backgroundColor: '#374151', width: '100%', marginTop: 4, borderRadius: 2, overflow: 'hidden' }}><View style={{ height: '100%', backgroundColor: '#f59e0b', width: `${item.percent}%` }} /></View>
                         <Text style={{ color: '#e5e7eb', fontSize: 12, marginTop: 4, fontWeight: '500' }} numberOfLines={1}>{item.title}</Text>
                       </TouchableOpacity>
                     ))}
                   </ScrollView>
                 </View>
               )}
-              {/* 🚀 插入结束 */}
               {!isSearching && (
                 <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginVertical: 15, paddingHorizontal: 16, maxHeight: 40 }}>
                   <TouchableOpacity onPress={() => setActiveTab('all')} style={[styles.tab, activeTab === 'all' && styles.tabActive]}><Text style={styles.tabText}>全部</Text></TouchableOpacity>
@@ -344,9 +319,14 @@ export default function MediaGridScreen({ navigation }) {
                 </ScrollView>
               )}
               {!isSearching && activeTab !== 'all' && (
-                <TouchableOpacity style={styles.appendBtn} onPress={() => openBrowser('add_path', activeTab)}>
-                  <Folder color="#3b82f6" size={16} /><Text style={styles.appendBtnText}>为此库追加新目录</Text>
-                </TouchableOpacity>
+                <View style={{ flexDirection: 'row', paddingHorizontal: 16, marginBottom: 15 }}>
+                  <TouchableOpacity style={styles.appendBtn} onPress={() => openBrowser('add_path', activeTab)}>
+                    <Folder color="#3b82f6" size={16} /><Text style={styles.appendBtnText}>追加目录</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity style={[styles.appendBtn, { backgroundColor: 'rgba(239, 68, 68, 0.15)', marginLeft: 10 }]} onPress={() => openBrowser('add_path', activeTab)}>
+                    <Ban color="#ef4444" size={16} /><Text style={[styles.appendBtnText, {color: '#ef4444'}]}>排除目录</Text>
+                  </TouchableOpacity>
+                </View>
               )}
             </>
           }
@@ -363,10 +343,11 @@ export default function MediaGridScreen({ navigation }) {
         />
       )}
       
+      {/* 📁 浏览器弹窗 */}
       <Modal visible={showAddLibModal} animationType="slide">
           <View style={styles.container}>
               <View style={styles.browserHeader}>
-                  <Text style={{color:'#fff', fontSize:18, fontWeight:'bold'}}>{browserMode === 'create' ? '新建媒体库' : '追加文件夹'}</Text>
+                  <Text style={{color:'#fff', fontSize:18, fontWeight:'bold'}}>{browserMode === 'create' ? '新建媒体库' : '管理目录'}</Text>
                   <TouchableOpacity onPress={() => setShowAddLibModal(false)}><X color="#ffffff" size={28} /></TouchableOpacity>
               </View>
               <View style={{flexDirection:'row', alignItems:'center', padding:15, backgroundColor:'#1f2937'}}>
@@ -382,7 +363,7 @@ export default function MediaGridScreen({ navigation }) {
                   ))}
               </ScrollView>
               <View style={{padding:20, backgroundColor:'#1f2937', borderTopWidth:1, borderTopColor:'#374151'}}>
-                  {browserMode === 'create' && (
+                  {browserMode === 'create' ? (
                     <>
                       <TextInput style={styles.setupInput} placeholder="媒体库名称 (如: 电影)" placeholderTextColor="#6b7280" value={newLibName} onChangeText={setNewLibName} />
                       <View style={{flexDirection:'row', justifyContent:'space-between', marginBottom:20}}>
@@ -393,9 +374,18 @@ export default function MediaGridScreen({ navigation }) {
                           </TouchableOpacity>
                         ))}
                       </View>
+                      <TouchableOpacity style={styles.primaryBtn} onPress={() => handleSaveLibrary(false)}><Text style={styles.btnText}>保存并扫描</Text></TouchableOpacity>
                     </>
+                  ) : (
+                    <View style={{flexDirection: 'row', justifyContent: 'space-between'}}>
+                      <TouchableOpacity style={[styles.primaryBtn, {flex: 1, marginRight: 10}]} onPress={() => handleSaveLibrary(false)}>
+                        <Text style={styles.btnText}>包含此目录</Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity style={[styles.primaryBtn, {flex: 1, backgroundColor: '#ef4444'}]} onPress={() => handleSaveLibrary(true)}>
+                        <Text style={styles.btnText}>设为排除目录</Text>
+                      </TouchableOpacity>
+                    </View>
                   )}
-                  <TouchableOpacity style={styles.primaryBtn} onPress={handleSaveLibrary}><Text style={styles.btnText}>保存并扫描</Text></TouchableOpacity>
               </View>
           </View>
       </Modal>
@@ -414,7 +404,7 @@ const styles = StyleSheet.create({
   input: { flex: 1, color: '#ffffff', height: 50, marginLeft: 10 }, primaryBtn: { backgroundColor: '#3b82f6', padding: 15, borderRadius: 10, alignItems: 'center' }, btnText: { color: '#ffffff', fontWeight: 'bold', fontSize: 16 },
   tab: { paddingHorizontal: 18, paddingVertical: 8, borderRadius: 20, backgroundColor: '#1f2937', marginRight: 10, borderWidth: 1, borderColor: '#374151', justifyContent: 'center' },
   tabActive: { backgroundColor: '#3b82f6', borderColor: '#3b82f6' }, tabText: { color: '#ffffff', fontWeight: 'bold', fontSize: 13 },
-  appendBtn: { flexDirection: 'row', alignItems: 'center', alignSelf: 'flex-start', marginLeft: 16, marginBottom: 15, padding: 8, backgroundColor: 'rgba(59, 130, 246, 0.15)', borderRadius: 8 },
+  appendBtn: { flexDirection: 'row', alignItems: 'center', padding: 8, backgroundColor: 'rgba(59, 130, 246, 0.15)', borderRadius: 8 },
   appendBtnText: { color: '#3b82f6', marginLeft: 6, fontSize: 12, fontWeight: 'bold' },
   posterCard: { width: POSTER_WIDTH, marginBottom: 18, marginRight: 12 }, posterShadow: { elevation: 8, shadowColor: '#000', borderRadius: 10, overflow: 'hidden' }, posterImage: { width: POSTER_WIDTH, height: POSTER_HEIGHT, backgroundColor: '#1f2937' },
   browserHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', padding: 16, paddingTop: 50, backgroundColor: '#1f2937' },
