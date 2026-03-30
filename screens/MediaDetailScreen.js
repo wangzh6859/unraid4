@@ -6,7 +6,7 @@ import { BlurView } from 'expo-blur';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { XMLParser } from 'fast-xml-parser';
 import base64 from 'base-64';
-import { ChevronLeft, Play, Film, MonitorPlay, X, Settings2, Video as VideoIcon, AudioLines, Subtitles, Info, ExternalLink, CheckCircle2 } from 'lucide-react-native';
+import { ChevronLeft, Play, Film, MonitorPlay, X, Settings2, Video as VideoIcon, AudioLines, Subtitles, Info, ExternalLink, Clock } from 'lucide-react-native';
 
 const { width, height } = Dimensions.get('window');
 const VIDEO_FORMATS = /\.(mkv|mp4|avi|ts|rmvb|flv|wmv|m2ts|vob|mov|webm|iso)$/i;
@@ -21,6 +21,9 @@ export default function MediaDetailScreen({ route, navigation }) {
   const [episodes, setEpisodes] = useState([]);
   const [loadingEpisodes, setLoadingEpisodes] = useState(false);
   const [nfoDetails, setNfoDetails] = useState(movie.nfo || null);
+  
+  // 💡 记忆播放状态
+  const [resumeInfo, setResumeInfo] = useState(null); 
   
   const [activeVideoUrl, setActiveVideoUrl] = useState(null);
   const [showSettings, setShowSettings] = useState(false);
@@ -41,6 +44,15 @@ export default function MediaDetailScreen({ route, navigation }) {
       const url = await AsyncStorage.getItem('@media_dav_url');
       const user = await AsyncStorage.getItem('@media_dav_user');
       const pass = await AsyncStorage.getItem('@media_dav_pass');
+      
+      // 💡 读取本地播放历史，看看这部片子以前看过没
+      const historyStr = await AsyncStorage.getItem('@media_playback_progress');
+      if (historyStr) {
+        const history = JSON.parse(historyStr);
+        const pastRecord = history.find(h => h.id === movie.id);
+        if (pastRecord) setResumeInfo(pastRecord); // 找到了历史记录！
+      }
+
       if (url && user && pass) {
         setUsername(user); setPassword(pass);
         const auth = `Basic ${base64.encode(`${user}:${pass}`)}`;
@@ -118,29 +130,37 @@ export default function MediaDetailScreen({ route, navigation }) {
     const status = playbackStatusRef.current;
     if (status && activeVideoUrl) {
       const percent = (status.positionMillis / status.durationMillis) * 100;
-      if (percent > 1 && percent < 95) {
-        const progressRecord = { id: movie.id, title: movie.title, posterUrl: movie.posterUrl, percent: percent.toFixed(1), positionMillis: status.positionMillis, videoUrl: activeVideoUrl };
-        try {
-          let history = JSON.parse(await AsyncStorage.getItem('@media_playback_progress') || '[]');
-          history = history.filter(h => h.id !== movie.id); history.unshift(progressRecord);
-          if (history.length > 15) history.pop(); await AsyncStorage.setItem('@media_playback_progress', JSON.stringify(history));
-        } catch(e) {}
-      }
+      // 记录进度
+      const progressRecord = { id: movie.id, title: movie.title, posterUrl: movie.posterUrl, percent: percent.toFixed(1), positionMillis: status.positionMillis, videoUrl: activeVideoUrl };
+      try {
+        let history = JSON.parse(await AsyncStorage.getItem('@media_playback_progress') || '[]');
+        history = history.filter(h => h.id !== movie.id); 
+        if (percent > 1 && percent < 95) history.unshift(progressRecord); // 没看完，放进进度里
+        if (history.length > 15) history.pop(); 
+        await AsyncStorage.setItem('@media_playback_progress', JSON.stringify(history));
+        if (isMounted.current) setResumeInfo(progressRecord); // 实时更新页面按钮
+      } catch(e) {}
     }
     setActiveVideoUrl(null); playbackStatusRef.current = null; setShowSettings(false);
   };
 
+  // 💡 智能的主播放按钮逻辑
   const handleMainPlay = () => {
-    if (movie.videoUrl) setActiveVideoUrl(movie.videoUrl);
-    else if (episodes.length > 0) setActiveVideoUrl(episodes[0].url); 
-    else Alert.alert('提示', '未找到可播放的视频源');
+    if (resumeInfo && resumeInfo.videoUrl) {
+      setActiveVideoUrl(resumeInfo.videoUrl); // 从历史记录的视频接着播
+    } else if (movie.videoUrl) {
+      setActiveVideoUrl(movie.videoUrl);
+    } else if (episodes.length > 0) {
+      setActiveVideoUrl(episodes[0].url); 
+    } else {
+      Alert.alert('提示', '未找到可播放的视频源');
+    }
   };
 
-  // 💡 极其硬核的第三方播放器唤醒引擎 (已适配 MX Player 与防浏览器下载)
+  // 💡 终极绝杀：底层 Intent 意图唤醒 (彻底屏蔽浏览器下载)
   const handleExternalPlay = async () => {
     if (!activeVideoUrl) return;
     
-    // 生成带 Basic Auth 认证的直链
     const safeUser = encodeURIComponent(username);
     const safePass = encodeURIComponent(password);
     const cleanOrigin = davOrigin.replace(/^https?:\/\//, '');
@@ -150,46 +170,43 @@ export default function MediaDetailScreen({ route, navigation }) {
 
     Alert.alert(
       '选择外部播放器',
-      '请选择您要唤醒的播放器：',
+      '请选择系统播放器，或强行呼叫 MX Player/VLC：',
       [
         { 
-          text: 'VLC Player', 
+          text: '系统自由选择 (推荐)', 
           onPress: () => {
-            // VLC 专属协议唤醒
-            const vlcUrl = fullUrl.replace(/^https?:\/\//, 'vlc://');
-            Linking.openURL(vlcUrl).catch(() => Alert.alert('提示', '未安装 VLC 播放器'));
+            if (Platform.OS === 'android') {
+              // 🔥 核心魔法：使用 Android Intent 语法，强行指定 type=video/*
+              // 这样安卓的底层只会呼叫“视频播放器”类的 App，浏览器绝对不会弹出来下载！
+              const urlWithoutScheme = fullUrl.replace(/^https?:\/\//, '');
+              const scheme = fullUrl.startsWith('https') ? 'https' : 'http';
+              const intentUrl = `intent://${urlWithoutScheme}#Intent;scheme=${scheme};type=video/*;action=android.intent.action.VIEW;end`;
+              Linking.openURL(intentUrl).catch(() => Linking.openURL(fullUrl));
+            } else {
+              Linking.openURL(fullUrl);
+            }
           }
         },
         { 
-          text: 'MX Player (安卓专属)', 
+          text: 'MX Player', 
           onPress: () => {
             if (Platform.OS === 'android') {
-              // 强制唤醒 MX Player 免费版
+              // 强行把视频塞进 MX Player 的嘴里
               const mxIntent = `intent:${fullUrl}#Intent;package=com.mxtech.videoplayer.ad;action=android.intent.action.VIEW;type=video/*;end`;
               Linking.openURL(mxIntent).catch(() => {
-                // 如果没有免费版，尝试唤醒 MX Player Pro 专业版
                 const mxProIntent = `intent:${fullUrl}#Intent;package=com.mxtech.videoplayer.pro;action=android.intent.action.VIEW;type=video/*;end`;
                 Linking.openURL(mxProIntent).catch(() => Alert.alert('提示', '未安装 MX Player'));
               });
             } else {
-              Alert.alert('提示', 'MX Player 唤醒主要支持 Android 设备');
+              Alert.alert('提示', 'MX Player 仅限 Android');
             }
           }
         },
         { 
-          text: '自由选择播放器', 
+          text: 'VLC Player', 
           onPress: () => {
-            if (Platform.OS === 'android') {
-              // 💡 核心魔法：强制指定 type=video/*，安卓系统会弹出一个只包含视频播放器的选择框，彻底屏蔽浏览器下载！
-              const intentUrl = `intent:${fullUrl}#Intent;action=android.intent.action.VIEW;type=video/*;end`;
-              Linking.openURL(intentUrl).catch(() => {
-                 // 如果 intent 失败，作为最后的兜底
-                 Linking.openURL(fullUrl);
-              });
-            } else {
-              // iOS 的 Safari 默认就是原生全屏播放视频，不会下载
-              Linking.openURL(fullUrl);
-            }
+            const vlcUrl = fullUrl.replace(/^https?:\/\//, 'vlc://');
+            Linking.openURL(vlcUrl).catch(() => Alert.alert('提示', '未安装 VLC Player'));
           }
         },
         { text: '取消', style: 'cancel' }
@@ -200,10 +217,10 @@ export default function MediaDetailScreen({ route, navigation }) {
   const handleTrackSelect = (type, name) => {
     Alert.alert(
       `切换${type === 'audio' ? '音轨' : '字幕'}`,
-      `您选择了: ${name}\n\n由于系统原生引擎限制，直接在 App 内切换 MKV 内嵌流可能会失效。强烈建议呼叫第三方专业播放器。`,
+      `您选择了: ${name}\n\n由于系统原生引擎限制，直接在 App 内切换 MKV 内嵌流可能会失效。请点击【呼叫外部播放器】使用专业解码器接管。`,
       [
         { text: '取消', style: 'cancel' },
-        { text: '呼叫第三方播放器', onPress: handleExternalPlay, style: 'default' }
+        { text: '呼叫外部播放器', onPress: handleExternalPlay, style: 'default' }
       ]
     );
   };
@@ -327,7 +344,8 @@ export default function MediaDetailScreen({ route, navigation }) {
                   setPlaybackStats({ position: status.positionMillis, duration: status.durationMillis, isBuffering: status.isBuffering });
                 } 
               }}
-              positionMillis={movie.positionMillis || 0} 
+              // 💡 核心记忆读取点：如果是断点续播，直接跳到上次的位置
+              positionMillis={resumeInfo?.positionMillis || movie.positionMillis || 0} 
             />
           </View>
 
@@ -349,10 +367,9 @@ export default function MediaDetailScreen({ route, navigation }) {
 
                   <View style={styles.divider} />
                   
-                  {/* 💡 这里就是全新的外部唤醒引擎按钮 */}
                   <TouchableOpacity style={styles.externalBtn} onPress={handleExternalPlay}>
                     <ExternalLink color="#ffffff" size={18} style={{marginRight: 8}}/>
-                    <Text style={{color:'#fff', fontWeight:'bold'}}>使用第三方播放器打开视频</Text>
+                    <Text style={{color:'#fff', fontWeight:'bold'}}>使用第三方播放器接管播放</Text>
                   </TouchableOpacity>
                   <Text style={{color:'#6b7280', fontSize: 11, textAlign:'center', marginTop:8, marginBottom:40}}>* 受限于原生流媒体解码器能力，如遇切换失效或无声音，请呼叫第三方专业播放器。</Text>
                 </ScrollView>
@@ -382,10 +399,20 @@ export default function MediaDetailScreen({ route, navigation }) {
           </View>
         </View>
 
+        {/* 💡 进化后的播放按钮：带记忆功能的“继续播放” */}
         <View style={styles.actionSection}>
           <TouchableOpacity style={styles.mainPlayBtn} onPress={handleMainPlay}>
-            <Play color="#ffffff" size={22} fill="#ffffff" />
-            <Text style={styles.mainPlayText}>立即播放</Text>
+            {resumeInfo ? (
+              <>
+                <Clock color="#ffffff" size={22} />
+                <Text style={styles.mainPlayText}>继续播放 ({formatTime(resumeInfo.positionMillis)})</Text>
+              </>
+            ) : (
+              <>
+                <Play color="#ffffff" size={22} fill="#ffffff" />
+                <Text style={styles.mainPlayText}>立即播放</Text>
+              </>
+            )}
           </TouchableOpacity>
         </View>
 
@@ -403,7 +430,10 @@ export default function MediaDetailScreen({ route, navigation }) {
             <View style={styles.centerBox}><MonitorPlay color="#4b5563" size={48} /><Text style={{color:'#9ca3af', marginTop:10}}>未找到支持的视频文件 (可能小于100MB或格式不支持)</Text></View>
           ) : (
             episodes.map((ep, index) => (
-              <TouchableOpacity key={index} style={styles.episodeCard} onPress={() => setActiveVideoUrl(ep.url)}>
+              <TouchableOpacity key={index} style={styles.episodeCard} onPress={() => {
+                setActiveVideoUrl(ep.url);
+                setResumeInfo(null); // 点下面的集数，代表重新开始播这一集
+              }}>
                 <View style={styles.episodeIconBox}><Play color="#ffffff" size={20} fill="#ffffff" /></View>
                 <View style={{ flex: 1 }}>
                   <Text style={styles.episodeTitle} numberOfLines={2}>{ep.title}</Text>
@@ -435,25 +465,31 @@ const styles = StyleSheet.create({
   ratingBadge: { backgroundColor: '#f59e0b', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4, marginRight: 12 },
   ratingText: { color: '#ffffff', fontSize: 12, fontWeight: 'bold' },
   typeBadge: { borderWidth: 1, borderColor: '#6b7280', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4, color: '#9ca3af', fontSize: 12 },
+  
   actionSection: { paddingHorizontal: 20, marginTop: 15, marginBottom: 10 },
   mainPlayBtn: { backgroundColor: '#e50914', flexDirection: 'row', alignItems: 'center', justifyContent: 'center', paddingVertical: 14, borderRadius: 8, elevation: 3 },
   mainPlayText: { color: '#ffffff', fontSize: 18, fontWeight: 'bold', marginLeft: 8 },
+
   infoSection: { padding: 20, paddingTop: 10 },
   plotTitle: { color: '#ffffff', fontSize: 18, fontWeight: 'bold', marginBottom: 12 },
   plotText: { color: '#9ca3af', fontSize: 14, lineHeight: 22 },
+  
   geekCard: { backgroundColor: 'rgba(31, 41, 55, 0.6)', padding: 16, borderRadius: 12, width: 220, marginRight: 12, borderWidth: 1, borderColor: 'rgba(55, 65, 81, 0.8)' },
   geekTitle: { color: '#ffffff', fontSize: 16, fontWeight: 'bold', marginLeft: 8 },
+
   episodesSection: { padding: 20, paddingTop: 0, paddingBottom: 50 },
   centerBox: { padding: 40, alignItems: 'center' },
   episodeCard: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#1f2937', padding: 16, borderRadius: 12, marginBottom: 12, elevation: 3 },
   episodeIconBox: { width: 40, height: 40, borderRadius: 20, backgroundColor: '#3b82f6', justifyContent: 'center', alignItems: 'center', marginRight: 16 },
   episodeTitle: { color: '#e5e7eb', fontSize: 15, fontWeight: 'bold', marginBottom: 4 },
   episodeSub: { color: '#6b7280', fontSize: 12 },
+  
   playerWrapper: { position: 'absolute', top: 0, left: 0, width: width, height: height, zIndex: 999, backgroundColor: '#000', justifyContent: 'center' },
   playerContainer: { flex: 1, justifyContent: 'center', position: 'relative' },
   playerTopBar: { position: 'absolute', top: Platform.OS === 'ios' ? 50 : 30, left: 0, width: '100%', flexDirection: 'row', justifyContent: 'space-between', paddingHorizontal: 20, zIndex: 1000 },
   iconBtnLayer: { padding: 8, backgroundColor: 'rgba(0,0,0,0.5)', borderRadius: 20 },
   videoView: { width: '100%', height: height * 0.4 }, 
+  
   modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.7)', justifyContent: 'flex-end' },
   consolePanel: { backgroundColor: '#1f2937', height: height * 0.7, borderTopLeftRadius: 24, borderTopRightRadius: 24 },
   consoleHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', padding: 20, borderBottomWidth: 1, borderBottomColor: '#374151' },
@@ -461,10 +497,12 @@ const styles = StyleSheet.create({
   consoleRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 12 },
   consoleTitle: { color: '#e5e7eb', fontSize: 16, fontWeight: 'bold', marginLeft: 8 },
   consoleText: { color: '#9ca3af', fontSize: 14, marginBottom: 6 },
+  
   trackItem: { flexDirection: 'row', alignItems: 'center', paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: '#374151' },
   radioCircle: { height: 20, width: 20, borderRadius: 10, borderWidth: 2, borderColor: '#3b82f6', alignItems: 'center', justifyContent: 'center', marginRight: 12 },
   radioInner: { height: 10, width: 10, borderRadius: 5, backgroundColor: '#3b82f6' },
   trackText: { color: '#e5e7eb', fontSize: 15 },
   divider: { height: 1, backgroundColor: '#374151', marginVertical: 20 },
+  
   externalBtn: { flexDirection: 'row', backgroundColor: '#8b5cf6', padding: 16, borderRadius: 12, alignItems: 'center', justifyContent: 'center' }
 });
