@@ -185,21 +185,51 @@ export default function MediaGridScreen({ navigation }) {
                 const nfoRes = await fetch(origin + nfoItem.href, { headers: { 'Authorization': auth }});
                 movie.nfo = parseNfo(await nfoRes.text());
                 if (movie.nfo.title && movie.nfo.title !== '未知标题') movie.title = movie.nfo.title;
-              } catch(e){}
+              } catch(e){ console.log(`Error parsing NFO for ${path}:`, e); }
+              // 尝试在同级目录下寻找海报图片
+              const possiblePosterNames = ['poster', 'folder', 'cover', movie.title];
               items.forEach(i => {
                 const h = i.href.toLowerCase();
-                if ((h.includes('poster')||h.includes('folder')||h.includes('cover')) && /\.(jpg|jpeg|png|webp)$/i.test(h)) movie.posterUrl = origin + i.href;
+                if (possiblePosterNames.some(name => h.includes(name)) && /\.(jpg|jpeg|png|webp)$/i.test(h)) {
+                  movie.posterUrl = origin + i.href;
+                }
               });
+              if (!movie.posterUrl) {
+                // 如果还没有找到海报，尝试找第一个图片文件作为海报
+                const firstImage = items.find(i => /\.(jpg|jpeg|png|webp)$/i.test(i.href.toLowerCase()));
+                if (firstImage) movie.posterUrl = origin + firstImage.href;
+              }
               results.push(movie);
             } else {
-              let videos = items.filter(i => {
+              // 如果没有 NFO 文件，尝试从文件名中智能提取标题和寻找海报
+              let videoFiles = items.filter(i => {
                 if (!/\.(mkv|mp4|avi|iso|ts|rmvb|m2ts|vob|mov|webm)$/i.test(i.href)) return false;
                 return Number(i.propstat?.prop?.getcontentlength || 0) >= MIN_VIDEO_SIZE; 
               });
-              videos.forEach(v => {
-                let title = decodeURIComponent(v.href.split('/').pop()).replace(/\.(mkv|mp4|avi|iso|ts|rmvb|m2ts|vob|mov|webm)$/i, '');
-                results.push({ id: `${lib.id}-${results.length}`, libraryId: lib.id, type: lib.type, title: title, path: path, videoUrl: origin + v.href, posterUrl: null, nfo: null });
-              });
+
+              if (videoFiles.length > 0) {
+                // 尝试找一个海报，优先找同级目录下的通用海报名，或者直接以文件夹命名的图片
+                let folderName = decodeURIComponent(path.split('/').filter(Boolean).pop() || '未知');
+                let bestPoster = null;
+                const possiblePosterNames = ['poster', 'folder', 'cover', folderName];
+
+                items.forEach(i => {
+                  const h = i.href.toLowerCase();
+                  if (!bestPoster && possiblePosterNames.some(name => h.includes(name)) && /\.(jpg|jpeg|png|webp)$/i.test(h)) {
+                    bestPoster = origin + i.href;
+                  }
+                });
+                if (!bestPoster) {
+                  const firstImage = items.find(i => /\.(jpg|jpeg|png|webp)$/i.test(i.href.toLowerCase()));
+                  if (firstImage) bestPoster = origin + firstImage.href;
+                }
+
+                videoFiles.forEach(v => {
+                  let title = decodeURIComponent(v.href.split('/').pop()).replace(VIDEO_FORMATS, '').trim();
+                  if (!title) title = folderName; // 如果视频文件名提取不出标题，使用文件夹名
+                  results.push({ id: `${lib.id}-${results.length}`, libraryId: lib.id, type: lib.type, title: title, path: path, videoUrl: origin + v.href, posterUrl: bestPoster, nfo: null });
+                });
+              }
               items.forEach(i => {
                 const h = i.href.replace(/https?:\/\/[^\/]+/, '');
                 if (i.propstat?.prop?.resourcetype?.collection === '' && h !== path && h !== path.slice(0,-1)) {
