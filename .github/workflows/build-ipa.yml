@@ -54,9 +54,8 @@ jobs:
         run: |
           cd ios
           # Use xcworkspace if it exists, otherwise use xcodeproj
-          if [ -d "*.xcworkspace" ]; then
-            WORKSPACE=$(ls *.xcworkspace | head -1)
-            xcodebuild -workspace "$WORKSPACE" \
+          if [ -d "Unraid.xcworkspace" ]; then
+            xcodebuild -workspace Unraid.xcworkspace \
               -scheme Unraid \
               -sdk iphoneos \
               -configuration Release \
