@@ -48,8 +48,14 @@ jobs:
       - name: Build iOS Archive (Unsigned)
         run: |
           cd ios
-          xcodebuild -workspace Unraid.xcworkspace \
-            -scheme Unraid \
+          # List files to debug
+          ls -la
+          # Find the correct workspace name
+          WORKSPACE=$(ls *.xcworkspace | head -1)
+          SCHEME=$(basename "$WORKSPACE" .xcworkspace)
+          echo "Using workspace: $WORKSPACE, scheme: $SCHEME"
+          xcodebuild -workspace "$WORKSPACE" \
+            -scheme "$SCHEME" \
             -sdk iphoneos \
             -configuration Release \
             -archivePath build/Unraid.xcarchive \
