@@ -1,14 +1,23 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { StyleSheet, Text, View, TouchableOpacity, ActivityIndicator, FlatList, Image, Alert, Dimensions, TextInput, KeyboardAvoidingView, Platform, Modal, ScrollView } from 'react-native';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
+import { StyleSheet, Text, View, TouchableOpacity, ActivityIndicator, FlatList, Image, Alert, Dimensions, TextInput, KeyboardAvoidingView, Platform, Modal, ScrollView, useWindowDimensions } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { XMLParser } from 'fast-xml-parser';
 import base64 from 'base-64';
 import { PlayCircle, RefreshCw, Film, Server, User, Key, Plus, FolderHeart, LogOut, Folder, ChevronRight, CheckCircle2, X, Search, Clock, Ban, ArrowUpDown } from 'lucide-react-native';
 
-const { width } = Dimensions.get('window');
-const POSTER_WIDTH = (width - 48) / 3; 
-const POSTER_HEIGHT = POSTER_WIDTH * 1.5; 
-const MIN_VIDEO_SIZE = 100 * 1024 * 1024; 
+  // 💡 响应式布局：根据屏幕宽度动态计算列数和海报尺寸
+  const { width: windowWidth, height: windowHeight } = useWindowDimensions();
+  const getColumnCount = (w) => {
+    if (w > 1200) return 6;
+    if (w > 900) return 5;
+    if (w > 600) return 4;
+    return 3;
+  };
+  const numColumns = getColumnCount(windowWidth);
+  const GAP = 12;
+  const TOTAL_GAP = GAP * (numColumns + 1);
+  const POSTER_WIDTH = (windowWidth - TOTAL_GAP) / numColumns;
+  const POSTER_HEIGHT = POSTER_WIDTH * 1.5;
 
 export default function MediaGridScreen({ navigation }) {
   const [isConfigured, setIsConfigured] = useState(false);
@@ -322,27 +331,36 @@ export default function MediaGridScreen({ navigation }) {
         </View>
       ) : (
         <FlatList
-          data={getFilteredAndSortedData()} // 💡 使用排序和过滤后的数据
+          key={`grid-${numColumns}`} // 💡 切换布局时必须强制重新挂载
+          data={getFilteredAndSortedData()}
           keyExtractor={item => item.id}
-          numColumns={3}
+          numColumns={numColumns}
+          columnWrapperStyle={{ paddingHorizontal: GAP, gap: GAP }}
+          renderItem={({ item }) => (
+            <TouchableOpacity 
+              style={[styles.posterCard, { width: POSTER_WIDTH, marginBottom: GAP }]} 
+              onPress={() => navigation.navigate('MediaDetail', { movie: item })}
+            >
+              <View style={[styles.posterShadow, { width: POSTER_WIDTH, height: POSTER_HEIGHT }]}>
+                {item.posterUrl ? (
+                  <Image 
+                    source={{ uri: item.posterUrl, headers: { 'Authorization': `Basic ${base64.encode(`${username}:${password}`)}` } }} 
+                    style={{ width: '100%', height: '100%', backgroundColor: '#1f2937' }}
+                    resizeMode="cover"
+                  />
+                ) : (
+                  <View style={[styles.fullCenter, { width: '100%', height: '100%', backgroundColor: '#1f2937' }]}><Film color="#4b5563" size={32} /></View>
+                )}
+                {item.nfo?.rating && item.nfo?.rating !== '0.0' && (
+                  <View style={styles.ratingBadge}><Text style={styles.ratingText}>{item.nfo.rating}</Text></View>
+                )}
+              </View>
+              <Text style={{color:'#fff', fontSize:12, marginTop:6, width: POSTER_WIDTH}} numberOfLines={1}>{item.title}</Text>
+            </TouchableOpacity>
+          )}
+          contentContainerStyle={{ paddingBottom: 100 }}
           ListHeaderComponent={
             <>
-              {!isSearching && continueWatching.length > 0 && (
-                <View style={{ marginTop: 10, marginBottom: 5 }}>
-                  <View style={{ flexDirection: 'row', alignItems: 'center', marginLeft: 16, marginBottom: 12 }}>
-                    <Clock color="#f59e0b" size={18} /><Text style={{ color: '#ffffff', fontSize: 16, fontWeight: 'bold', marginLeft: 6 }}>继续观看</Text>
-                  </View>
-                  <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ paddingLeft: 16 }}>
-                    {continueWatching.map((item, idx) => (
-                      <TouchableOpacity key={idx} style={{ width: 140, marginRight: 12 }} onPress={() => navigation.navigate('MediaDetail', { movie: item })}>
-                        <Image source={{ uri: item.posterUrl, headers: { 'Authorization': `Basic ${base64.encode(`${username}:${password}`)}` } }} style={{ width: 140, height: 80, borderRadius: 8, backgroundColor: '#374151' }} />
-                        <View style={{ height: 3, backgroundColor: '#374151', width: '100%', marginTop: 4, borderRadius: 2, overflow: 'hidden' }}><View style={{ height: '100%', backgroundColor: '#f59e0b', width: `${item.percent}%` }} /></View>
-                        <Text style={{ color: '#e5e7eb', fontSize: 12, marginTop: 4, fontWeight: '500' }} numberOfLines={1}>{item.title}</Text>
-                      </TouchableOpacity>
-                    ))}
-                  </ScrollView>
-                </View>
-              )}
               {!isSearching && (
                 <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginVertical: 15, paddingHorizontal: 16, maxHeight: 40 }}>
                   <TouchableOpacity onPress={() => setActiveTab('all')} style={[styles.tab, activeTab === 'all' && styles.tabActive]}><Text style={styles.tabText}>全部</Text></TouchableOpacity>
@@ -353,31 +371,8 @@ export default function MediaGridScreen({ navigation }) {
                   ))}
                 </ScrollView>
               )}
-              {!isSearching && activeTab !== 'all' && (
-                <View style={{ flexDirection: 'row', paddingHorizontal: 16, marginBottom: 15 }}>
-                  <TouchableOpacity style={styles.appendBtn} onPress={() => openBrowser('add_path', activeTab)}>
-                    <Folder color="#3b82f6" size={16} /><Text style={styles.appendBtnText}>追加目录</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity style={[styles.appendBtn, { backgroundColor: 'rgba(239, 68, 68, 0.15)', marginLeft: 10 }]} onPress={() => openBrowser('add_path', activeTab)}>
-                    <Ban color="#ef4444" size={16} /><Text style={[styles.appendBtnText, {color: '#ef4444'}]}>排除目录</Text>
-                  </TouchableOpacity>
-                </View>
-              )}
             </>
           }
-          renderItem={({ item }) => (
-            <TouchableOpacity style={styles.posterCard} onPress={() => navigation.navigate('MediaDetail', { movie: item })}>
-              <View style={styles.posterShadow}>
-                {item.posterUrl ? <Image source={{ uri: item.posterUrl, headers: { 'Authorization': `Basic ${base64.encode(`${username}:${password}`)}` } }} style={styles.posterImage} /> : <View style={[styles.posterImage, styles.fullCenter]}><Film color="#4b5563" size={32} /></View>}
-                {/* 评分角标 (如果排序选了评分，直观显示出来更好) */}
-                {item.nfo?.rating && item.nfo?.rating !== '0.0' && <View style={styles.ratingBadge}><Text style={styles.ratingText}>{item.nfo.rating}</Text></View>}
-              </View>
-              <Text style={{color:'#fff', fontSize:12, marginTop:6}} numberOfLines={1}>{item.title}</Text>
-              {sortType.includes('year') && item.nfo?.year && <Text style={{color:'#9ca3af', fontSize:10, marginTop:2}}>{item.nfo.year}</Text>}
-            </TouchableOpacity>
-          )}
-          contentContainerStyle={{ paddingHorizontal: 12, paddingBottom: 100 }}
-          columnWrapperStyle={{ justifyContent: 'flex-start' }}
         />
       )}
 
