@@ -39,7 +39,7 @@ jobs:
           }
           data.expo.version = '1.0.' + buildNumber;
           fs.writeFileSync('app.json', JSON.stringify(data, null, 2));
-          console.log('✅ iOS版本号已更新为: v' + data.expo.version + ' (Build: ' + data.expo.ios.buildNumber + ')');
+          console.log('✅ iOS version updated to v' + data.expo.version);
           "
 
       - name: Generate Native iOS Code
@@ -51,35 +51,15 @@ jobs:
           pod install --repo-update
 
       - name: Clean Xcode Derived Data
-        run: |
-          rm -rf ~/Library/Developer/Xcode/DerivedData/*
+        run: rm -rf ~/Library/Developer/Xcode/DerivedData/*
 
-- name: Build iOS Archive (Unsigned)
+      - name: Build iOS Archive (Unsigned)
         run: |
           cd ios
-          # Use xcworkspace if it exists, otherwise use xcodeproj
           if [ -d "Unraid.xcworkspace" ]; then
-            xcodebuild -workspace Unraid.xcworkspace \
-              -scheme Unraid \
-              -sdk iphoneos \
-              -configuration Release \
-              -archivePath build/Unraid.xcarchive \
-              archive \
-              CODE_SIGN_IDENTITY="" \
-              CODE_SIGNING_REQUIRED=NO \
-              CODE_SIGNING_ALLOWED=NO \
-              IPHONEOS_DEPLOYMENT_TARGET=13.0
+            xcodebuild -workspace Unraid.xcworkspace -scheme Unraid -sdk iphoneos -configuration Release -archivePath build/Unraid.xcarchive archive CODE_SIGN_IDENTITY="" CODE_SIGNING_REQUIRED=NO CODE_SIGNING_ALLOWED=NO IPHONEOS_DEPLOYMENT_TARGET=13.0
           else
-            xcodebuild -project Unraid.xcodeproj \
-              -scheme Unraid \
-              -sdk iphoneos \
-              -configuration Release \
-              -archivePath build/Unraid.xcarchive \
-              archive \
-              CODE_SIGN_IDENTITY="" \
-              CODE_SIGNING_REQUIRED=NO \
-              CODE_SIGNING_ALLOWED=NO \
-              IPHONEOS_DEPLOYMENT_TARGET=13.0
+            xcodebuild -project Unraid.xcodeproj -scheme Unraid -sdk iphoneos -configuration Release -archivePath build/Unraid.xcarchive archive CODE_SIGN_IDENTITY="" CODE_SIGNING_REQUIRED=NO CODE_SIGNING_ALLOWED=NO IPHONEOS_DEPLOYMENT_TARGET=13.0
           fi
 
       - name: Create Unsigned IPA
@@ -102,19 +82,19 @@ jobs:
           name: iOS Build v1.0.${{ github.run_number }}
           body: |
             ## Unraid iOS App Build
-            
+
             This is an unsigned IPA for testing purposes.
-            
+
             **Version:** 1.0.${{ github.run_number }}
             **Build Date:** ${{ github.event.head_commit.timestamp }}
-            
+
             ### Installation
-            
+
             This IPA is unsigned. You need to sign it yourself or use tools like:
             - AltStore (https://altstore.io)
             - Sideloadly (https://sideloadly.io)
             - Xcode
-            
+
             ### Changes
             ${{ github.event.head_commit.message }}
         env:
