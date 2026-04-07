@@ -45,17 +45,19 @@ jobs:
       - name: Generate Native iOS Code
         run: npx expo prebuild --platform ios --clean --no-install
 
+      - name: Install CocoaPods Dependencies
+        run: |
+          cd ios
+          pod install
+
       - name: Build iOS Archive (Unsigned)
         run: |
           cd ios
           # List files to debug
           ls -la
-          # Find the correct workspace name
-          WORKSPACE=$(ls *.xcworkspace | head -1)
-          SCHEME=$(basename "$WORKSPACE" .xcworkspace)
-          echo "Using workspace: $WORKSPACE, scheme: $SCHEME"
-          xcodebuild -workspace "$WORKSPACE" \
-            -scheme "$SCHEME" \
+          # Use xcodeproj instead of xcworkspace
+          xcodebuild -project Unraid.xcodeproj \
+            -scheme Unraid \
             -sdk iphoneos \
             -configuration Release \
             -archivePath build/Unraid.xcarchive \
