@@ -1,0 +1,109 @@
+name: Build iOS IPA (Test)
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-latest
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v3
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: 18
+
+      - name: Setup Xcode
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: '16.4'
+
+      - name: Install Dependencies
+        run: npm install
+
+      - name: Auto Bump Version
+        run: |
+          node -e "
+          const fs = require('fs');
+          const data = JSON.parse(fs.readFileSync('app.json'));
+          const buildNumber = process.env.GITHUB_RUN_NUMBER;
+          if (data.expo.ios) {
+            data.expo.ios.buildNumber = buildNumber.toString();
+          } else {
+            data.expo.ios = { buildNumber: buildNumber.toString() };
+          }
+          data.expo.version = '1.0.' + buildNumber;
+          fs.writeFileSync('app.json', JSON.stringify(data, null, 2));
+          console.log('✅ iOS version updated to v' + data.expo.version);
+          "
+
+      - name: Generate Native iOS Code
+        run: npx expo prebuild --platform ios --clean --no-install
+
+      - name: Install CocoaPods Dependencies
+        run: |
+          cd ios
+          # 使用清华大学镜像源加速 pod 安装
+          pod repo remove master || true
+          pod repo add master https://mirrors.tuna.tsinghua.edu.cn/git/CocoaPods/Specs.git
+          pod install --repo-update --verbose
+
+      - name: Clean Xcode Derived Data
+        run: rm -rf ~/Library/Developer/Xcode/DerivedData/*
+
+      - name: Build iOS Archive (Unsigned)
+        run: |
+          cd ios
+          if [ -d "Unraid.xcworkspace" ]; then
+            xcodebuild -workspace Unraid.xcworkspace -scheme Unraid -sdk iphoneos -configuration Release -archivePath build/Unraid.xcarchive archive CODE_SIGN_IDENTITY="" CODE_SIGNING_REQUIRED=NO CODE_SIGNING_ALLOWED=NO IPHONEOS_DEPLOYMENT_TARGET=13.0
+          else
+            xcodebuild -project Unraid.xcodeproj -scheme Unraid -sdk iphoneos -configuration Release -archivePath build/Unraid.xcarchive archive CODE_SIGN_IDENTITY="" CODE_SIGNING_REQUIRED=NO CODE_SIGNING_ALLOWED=NO IPHONEOS_DEPLOYMENT_TARGET=13.0
+          fi
+
+      - name: Create Unsigned IPA
+        run: |
+          mkdir -p build/ipa
+          cd ios/build/Unraid.xcarchive/Products/Applications
+          # 将 .app 放入标准的 Payload/ 目录结构中，某些安装器（如 TrollStore）要求此结构
+          rm -rf Payload || true
+          mkdir -p Payload
+          cp -R Unraid.app Payload/
+          # 使用 -0 参数确保文件完全不压缩，避免 iOS 解压器出现兼容性问题
+          zip -0 -r ../../../../../build/ipa/Unraid-unsigned.ipa Payload
+
+      - name: Upload IPA to Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: Unraid-iOS-Test-${{ github.run_number }}
+          path: build/ipa/Unraid-unsigned.ipa
+
+      - name: Create Release with IPA
+        uses: softprops/action-gh-release@v1
+        with:
+          files: build/ipa/Unraid-unsigned.ipa
+          tag_name: ios-test-v1.0.${{ github.run_number }}
+          name: iOS Build Test v1.0.${{ github.run_number }}
+          body: |
+            ## Unraid iOS App Test Build
+
+            This is an unsigned IPA for testing purposes.
+
+            **Version:** 1.0.${{ github.run_number }}
+            **Build Date:** ${{ github.event.head_commit.timestamp }}
+
+            ### Installation
+
+            This IPA is unsigned. You need to sign it yourself or use tools like:
+            - AltStore (https://altstore.io)
+            - Sideloadly (https://sideloadly.io)
+            - Xcode
+
+            ### Changes
+            ${{ github.event.head_commit.message }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GH_RELEASE_TOKEN }}
