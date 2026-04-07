@@ -48,9 +48,13 @@ jobs:
       - name: Install CocoaPods Dependencies
         run: |
           cd ios
-          pod install
+          pod install --repo-update
 
-      - name: Build iOS Archive (Unsigned)
+      - name: Clean Xcode Derived Data
+        run: |
+          rm -rf ~/Library/Developer/Xcode/DerivedData/*
+
+- name: Build iOS Archive (Unsigned)
         run: |
           cd ios
           # Use xcworkspace if it exists, otherwise use xcodeproj
