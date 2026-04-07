@@ -48,7 +48,10 @@ jobs:
       - name: Install CocoaPods Dependencies
         run: |
           cd ios
-          pod install --repo-update
+          # 使用清华大学镜像源加速 pod 安装
+          pod repo remove master || true
+          pod repo add master https://mirrors.tuna.tsinghua.edu.cn/git/CocoaPods/Specs.git
+          pod install --repo-update --verbose
 
       - name: Clean Xcode Derived Data
         run: rm -rf ~/Library/Developer/Xcode/DerivedData/*
