@@ -69,7 +69,8 @@ jobs:
         run: |
           mkdir -p build/ipa
           cd ios/build/Unraid.xcarchive/Products/Applications
-          zip -r ../../../../../build/ipa/Unraid-unsigned.ipa Unraid.app
+          # 使用 -0 参数确保文件完全不压缩，避免 iOS 解压器出现兼容性问题
+          zip -0 -r ../../../../../build/ipa/Unraid-unsigned.ipa Unraid.app
 
       - name: Upload IPA to Artifacts
         uses: actions/upload-artifact@v4
