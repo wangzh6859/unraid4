@@ -13,7 +13,8 @@
     },
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.yourname.unraidmanager"
+      "bundleIdentifier": "com.yourname.unraidmanager",
+      "buildNumber": "1"
     },
     "android": {
       "package": "com.yourname.unraidmanager",
