@@ -69,8 +69,12 @@ jobs:
         run: |
           mkdir -p build/ipa
           cd ios/build/Unraid.xcarchive/Products/Applications
+          # 将 .app 放入标准的 Payload/ 目录结构中，某些安装器（如 TrollStore）要求此结构
+          rm -rf Payload || true
+          mkdir -p Payload
+          cp -R Unraid.app Payload/
           # 使用 -0 参数确保文件完全不压缩，避免 iOS 解压器出现兼容性问题
-          zip -0 -r ../../../../../build/ipa/Unraid-unsigned.ipa Unraid.app
+          zip -0 -r ../../../../../build/ipa/Unraid-unsigned.ipa Payload
 
       - name: Upload IPA to Artifacts
         uses: actions/upload-artifact@v4
