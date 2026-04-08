@@ -43,7 +43,8 @@ jobs:
           "
 
       - name: Generate Native iOS Code
-        run: npx expo prebuild --platform ios --clean --no-install
+        # 不使用 --no-install，确保 prebuild 能生成并更新 iOS 原生工程的 Podspecs
+        run: npx expo prebuild --platform ios --clean
 
       - name: Install CocoaPods Dependencies
         run: |
@@ -52,6 +53,24 @@ jobs:
           pod repo remove master || true
           pod repo add master https://mirrors.tuna.tsinghua.edu.cn/git/CocoaPods/Specs.git
           pod install --repo-update --verbose
+
+      - name: Verify CocoaPods
+        run: |
+          cd ios
+          if [ ! -f Podfile.lock ]; then
+            echo "Podfile.lock not found — pod install may have failed"
+            ls -la
+            exit 1
+          fi
+          echo "----- Podfile.lock (head) -----"
+          sed -n '1,200p' Podfile.lock || true
+          echo "----- checking for required Expo native pods -----"
+          if ! grep -E "EXFileSystem|ExpoModulesCore|EXConstants|expo-file-system|expo-constants|EXUpdates" Podfile.lock >/dev/null; then
+            echo "Required Expo native pods not found in Podfile.lock"
+            exit 1
+          else
+            echo "Required Expo pods present"
+          fi
 
       - name: Clean Xcode Derived Data
         run: rm -rf ~/Library/Developer/Xcode/DerivedData/*
