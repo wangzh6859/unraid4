@@ -46,6 +46,27 @@ jobs:
         # 不使用 --no-install，确保 prebuild 能生成并更新 iOS 原生工程的 Podspecs
         run: npx expo prebuild --platform ios --clean
 
+      - name: Ensure Expo AppDelegate is present
+        # 如果 prebuild 生成的 AppDelegate 没有集成 ExpoModulesCore，复制官方 ExpoAppDelegate.swift 覆盖（保证模块注册）
+        run: |
+          set -e
+          # 选取 ios 目录下第一个应用目录（prebuild 生成的目录）
+          APP_DIR=$(ls ios | egrep -v "Podfile|Podfile.lock|build|Pods|fastlane|\.xcodeproj|\.xcworkspace" | head -n1 || true)
+          echo "Detected APP_DIR=$APP_DIR"
+          if [ -z "$APP_DIR" ]; then
+            echo "No generated iOS app dir found; skipping AppDelegate injection"
+            exit 0
+          fi
+          TARGET_DIR=ios/$APP_DIR
+          # 仅当 node_modules 中存在官方 ExpoAppDelegate.swift 时才复制
+          SRC=node_modules/expo-modules-core/ios/AppDelegates/ExpoAppDelegate.swift
+          if [ -f "$SRC" ]; then
+            echo "Copying $SRC to $TARGET_DIR/AppDelegate.swift"
+            cp "$SRC" "$TARGET_DIR/AppDelegate.swift" || true
+          else
+            echo "ExpoAppDelegate.swift not found in node_modules; skipping"
+          fi
+
       - name: Install CocoaPods Dependencies
         run: |
           cd ios
