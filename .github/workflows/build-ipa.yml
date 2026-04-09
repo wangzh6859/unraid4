@@ -30,7 +30,7 @@ jobs:
       - name: Clean and Generate iOS Project
         run: |
           rm -rf ios
-          npx expo prebuild --platform ios --no-install
+          npx expo prebuild --platform ios --clean
 
       - name: Install CocoaPods
         run: |
@@ -42,6 +42,19 @@ jobs:
             echo "❌ Podfile.lock not created"
             exit 1
           fi
+
+      - name: Bump version (auto)
+        run: |
+          node -e "
+            const fs = require('fs');
+            const data = JSON.parse(fs.readFileSync('app.json'));
+            const rn = process.env.GITHUB_RUN_NUMBER;
+            data.expo.version = '1.0.' + rn;
+            if (!data.expo.ios) data.expo.ios = {};
+            data.expo.ios.buildNumber = rn.toString();
+            fs.writeFileSync('app.json', JSON.stringify(data, null, 2));
+            console.log('✅ Updated version to', data.expo.version);
+          "
 
       - name: Inject ExpoAppDelegate
         run: |
