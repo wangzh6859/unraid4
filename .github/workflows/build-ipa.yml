@@ -8,6 +8,7 @@ on:
 jobs:
   build:
     runs-on: macos-latest
+    timeout-minutes: 60
 
     steps:
       - name: Checkout Repository
@@ -26,155 +27,62 @@ jobs:
       - name: Install Dependencies
         run: npm install
 
-      - name: Auto Bump Version
-        run: |
-          node -e "
-          const fs = require('fs');
-          const data = JSON.parse(fs.readFileSync('app.json'));
-          const buildNumber = process.env.GITHUB_RUN_NUMBER;
-          if (data.expo.ios) {
-            data.expo.ios.buildNumber = buildNumber.toString();
-          } else {
-            data.expo.ios = { buildNumber: buildNumber.toString() };
-          }
-          data.expo.version = '1.0.' + buildNumber;
-          fs.writeFileSync('app.json', JSON.stringify(data, null, 2));
-          console.log('✅ Version: ' + data.expo.version);
-          "
-
       - name: Clean and Generate iOS Project
         run: |
           rm -rf ios
           npx expo prebuild --platform ios --no-install
 
-      - name: Setup CocoaPods with retry
+      - name: Install CocoaPods
         run: |
           cd ios
-          # 重试逻辑：最多尝试 3 次
-          for attempt in 1 2 3; do
-            echo "Attempt $attempt/3 for pod install..."
-            pod repo remove master || true
-            sleep 2
-            pod repo add master https://mirrors.tuna.tsinghua.edu.cn/git/CocoaPods/Specs.git && break
-            if [ $attempt -lt 3 ]; then sleep 10; fi
-          done
-          
-          for attempt in 1 2 3; do
-            echo "Attempt $attempt/3 for pod install..."
-            if pod install --repo-update 2>&1 | tee pod.log; then
-              break
-            fi
-            if [ $attempt -lt 3 ]; then sleep 15; fi
-          done
+          # 不使用任何镜像，直接使用官方 CDN 源，比 git 协议更稳定
+          export HOMEBREW_NO_AUTO_UPDATE=1
+          pod repo remove master || true
+          pod install --repo-update --verbose
           
           if [ ! -f Podfile.lock ]; then
-            echo "❌ CocoaPods installation failed"
-            cat pod.log || true
+            echo "❌ Podfile.lock not created"
             exit 1
           fi
-          echo "✅ CocoaPods installed"
-
-      - name: Verify Required Pods
-        run: |
-          cd ios
-          if ! grep -E "ExpoModulesCore|expo-modules-core" Podfile.lock >/dev/null 2>&1; then
-            echo "⚠️  ExpoModulesCore not in Podfile.lock, will attempt to add"
-          fi
-          echo "✅ Podfile.lock verified"
-          head -20 Podfile.lock
+          echo "✅ Podfile.lock created"
 
       - name: Inject ExpoAppDelegate
         run: |
           cd ios
-          # 查找生成的项目目录
           PROJECT_NAME=$(ls | grep -E "\.xcodeproj$" | head -1 | sed 's/\.xcodeproj$//')
-          if [ -z "$PROJECT_NAME" ]; then
-            echo "❌ No .xcodeproj found"
-            ls -la
-            exit 1
-          fi
-          echo "Found project: $PROJECT_NAME"
+          EXPO_DELEGATE=../node_modules/expo-modules-core/ios/AppDelegates/ExpoAppDelegate.swift
           
-          # ExpoAppDelegate 位置
-          EXPO_DELEGATE=node_modules/expo-modules-core/ios/AppDelegates/ExpoAppDelegate.swift
-          if [ ! -f "$EXPO_DELEGATE" ]; then
-            echo "❌ ExpoAppDelegate.swift not found in node_modules"
-            exit 1
-          fi
-          
-          # 查找 AppDelegate 位置并替换
-          for path in "$PROJECT_NAME/AppDelegate.swift" "$PROJECT_NAME/$PROJECT_NAME/AppDelegate.swift" "$PROJECT_NAME/AppDelegate.m"; do
+          for path in "$PROJECT_NAME/AppDelegate.swift" "$PROJECT_NAME/$PROJECT_NAME/AppDelegate.swift"; do
             if [ -f "$path" ]; then
-              echo "Replacing $path with ExpoAppDelegate.swift"
-              cp "$EXPO_DELEGATE" "${path%.*}.swift"
-              rm -f "${path%.*}.m" "${path%.*}.mm" 2>/dev/null || true
-              echo "✅ ExpoAppDelegate injected"
+              echo "Injecting ExpoAppDelegate into $path"
+              cp "$EXPO_DELEGATE" "$path"
               break
             fi
           done
-
-      - name: Clean Xcode Derived Data
-        run: rm -rf ~/Library/Developer/Xcode/DerivedData/*
 
       - name: Build iOS Archive
         run: |
           cd ios
           PROJECT_NAME=$(ls | grep -E "\.xcodeproj$" | head -1 | sed 's/\.xcodeproj$//')
           
+          # 使用 workspace 或 project 构建
           if [ -d "$PROJECT_NAME.xcworkspace" ]; then
-            WORKSPACE="$PROJECT_NAME.xcworkspace"
-            echo "Using workspace: $WORKSPACE"
-            xcodebuild -workspace "$WORKSPACE" -scheme "$PROJECT_NAME" -sdk iphoneos -configuration Release -archivePath build/$PROJECT_NAME.xcarchive archive CODE_SIGN_IDENTITY="" CODE_SIGNING_REQUIRED=NO CODE_SIGNING_ALLOWED=NO IPHONEOS_DEPLOYMENT_TARGET=13.0 2>&1 | tee build.log
+            xcodebuild -workspace "$PROJECT_NAME.xcworkspace" -scheme "$PROJECT_NAME" -sdk iphoneos -configuration Release -archivePath build/$PROJECT_NAME.xcarchive archive CODE_SIGN_IDENTITY="" CODE_SIGNING_REQUIRED=NO CODE_SIGNING_ALLOWED=NO IPHONEOS_DEPLOYMENT_TARGET=13.0
           else
-            echo "Using project: $PROJECT_NAME.xcodeproj"
-            xcodebuild -project "$PROJECT_NAME.xcodeproj" -scheme "$PROJECT_NAME" -sdk iphoneos -configuration Release -archivePath build/$PROJECT_NAME.xcarchive archive CODE_SIGN_IDENTITY="" CODE_SIGNING_REQUIRED=NO CODE_SIGNING_ALLOWED=NO IPHONEOS_DEPLOYMENT_TARGET=13.0 2>&1 | tee build.log
+            xcodebuild -project "$PROJECT_NAME.xcodeproj" -scheme "$PROJECT_NAME" -sdk iphoneos -configuration Release -archivePath build/$PROJECT_NAME.xcarchive archive CODE_SIGN_IDENTITY="" CODE_SIGNING_REQUIRED=NO CODE_SIGNING_ALLOWED=NO IPHONEOS_DEPLOYMENT_TARGET=13.0
           fi
-          
-          if [ $? -ne 0 ]; then
-            echo "❌ Build failed"
-            tail -100 build.log
-            exit 1
-          fi
-          echo "✅ Archive created"
-
-      - name: Extract App Name from Archive
-        run: |
-          cd ios/build
-          ARCHIVE=$(ls -d *.xcarchive | head -1)
-          APP_NAME=$(ls $ARCHIVE/Products/Applications | head -1 | sed 's/\.app$//')
-          echo "APP_NAME=$APP_NAME" >> $GITHUB_ENV
-          echo "ARCHIVE=$ARCHIVE" >> $GITHUB_ENV
-          echo "Found app: $APP_NAME"
 
       - name: Create Unsigned IPA
         run: |
-          cd ios/build
-          mkdir -p output
-          cd "$ARCHIVE/Products/Applications"
+          mkdir -p ios/build/output
+          cd ios/build/*.xcarchive/Products/Applications
+          APP_NAME=$(ls | head -1)
           mkdir -p Payload
-          cp -R "$APP_NAME.app" Payload/
-          zip -0 -r ../../output/Unraid-unsigned.ipa Payload
-          ls -lh ../../output/
-          echo "✅ IPA created"
+          cp -R "$APP_NAME" Payload/
+          zip -0 -r ../../../../../ios/build/output/Unraid-unsigned.ipa Payload
 
-      - name: Upload IPA to Artifacts
+      - name: Upload IPA
         uses: actions/upload-artifact@v4
         with:
-          name: Unraid-iOS-${{ github.run_number }}
+          name: Unraid-iOS
           path: ios/build/output/Unraid-unsigned.ipa
-
-      - name: Create Release with IPA
-        uses: softprops/action-gh-release@v1
-        with:
-          files: ios/build/output/Unraid-unsigned.ipa
-          tag_name: ios-v1.0.${{ github.run_number }}
-          name: iOS Build v1.0.${{ github.run_number }}
-          body: |
-            ## Unraid iOS App Build
-            
-            **Version:** 1.0.${{ github.run_number }}
-            **Build Date:** ${{ github.event.head_commit.timestamp }}
-            
-            This is an unsigned IPA.
-        env:
-          GITHUB_TOKEN: ${{ secrets.GH_RELEASE_TOKEN }}
