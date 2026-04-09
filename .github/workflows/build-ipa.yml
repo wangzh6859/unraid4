@@ -35,8 +35,6 @@ jobs:
       - name: Install CocoaPods
         run: |
           cd ios
-          # 不使用任何镜像，直接使用官方 CDN 源，比 git 协议更稳定
-          export HOMEBREW_NO_AUTO_UPDATE=1
           pod repo remove master || true
           pod install --repo-update --verbose
           
@@ -44,7 +42,6 @@ jobs:
             echo "❌ Podfile.lock not created"
             exit 1
           fi
-          echo "✅ Podfile.lock created"
 
       - name: Inject ExpoAppDelegate
         run: |
@@ -54,8 +51,8 @@ jobs:
           
           for path in "$PROJECT_NAME/AppDelegate.swift" "$PROJECT_NAME/$PROJECT_NAME/AppDelegate.swift"; do
             if [ -f "$path" ]; then
-              echo "Injecting ExpoAppDelegate into $path"
               cp "$EXPO_DELEGATE" "$path"
+              rm -f "${path%.*}.m" "${path%.*}.mm" 2>/dev/null || true
               break
             fi
           done
@@ -64,15 +61,13 @@ jobs:
         run: |
           cd ios
           PROJECT_NAME=$(ls | grep -E "\.xcodeproj$" | head -1 | sed 's/\.xcodeproj$//')
-          
-          # 使用 workspace 或 project 构建
           if [ -d "$PROJECT_NAME.xcworkspace" ]; then
             xcodebuild -workspace "$PROJECT_NAME.xcworkspace" -scheme "$PROJECT_NAME" -sdk iphoneos -configuration Release -archivePath build/$PROJECT_NAME.xcarchive archive CODE_SIGN_IDENTITY="" CODE_SIGNING_REQUIRED=NO CODE_SIGNING_ALLOWED=NO IPHONEOS_DEPLOYMENT_TARGET=13.0
           else
             xcodebuild -project "$PROJECT_NAME.xcodeproj" -scheme "$PROJECT_NAME" -sdk iphoneos -configuration Release -archivePath build/$PROJECT_NAME.xcarchive archive CODE_SIGN_IDENTITY="" CODE_SIGNING_REQUIRED=NO CODE_SIGNING_ALLOWED=NO IPHONEOS_DEPLOYMENT_TARGET=13.0
           fi
 
-      - name: Create Unsigned IPA
+      - name: Create IPA
         run: |
           mkdir -p ios/build/output
           cd ios/build/*.xcarchive/Products/Applications
@@ -81,8 +76,11 @@ jobs:
           cp -R "$APP_NAME" Payload/
           zip -0 -r ../../../../../ios/build/output/Unraid-unsigned.ipa Payload
 
-      - name: Upload IPA
-        uses: actions/upload-artifact@v4
+      - name: Upload to Release
+        uses: softprops/action-gh-release@v1
         with:
-          name: Unraid-iOS
-          path: ios/build/output/Unraid-unsigned.ipa
+          files: ios/build/output/Unraid-unsigned.ipa
+          tag_name: ios-v1.0.${{ github.run_number }}
+          name: iOS Build v1.0.${{ github.run_number }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GH_RELEASE_TOKEN }}
