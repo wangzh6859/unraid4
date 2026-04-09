@@ -42,35 +42,39 @@ jobs:
           console.log('✅ iOS version updated to v' + data.expo.version);
           "
 
-      - name: Generate Native iOS Code
-        # 不使用 --no-install，确保 prebuild 能生成并更新 iOS 原生工程的 Podspecs
-        run: npx expo prebuild --platform ios --clean
+      - name: Generate Native iOS Code (Full Regenerate)
+        # 彻底删除并重新生成 iOS 原生项目
+        run: |
+          rm -rf ios/* || true
+          npx expo prebuild --platform ios
 
       - name: Ensure Expo AppDelegate is present
-        # 如果 prebuild 生成的 AppDelegate 没有集成 ExpoModulesCore，复制官方 ExpoAppDelegate.swift 覆盖（保证模块注册）
+        # 强制将官方 ExpoAppDelegate.swift 复制到生成的 iOS 项目
         run: |
           set -e
-          # 选取 ios 目录下第一个应用目录（prebuild 生成的目录）
-          APP_DIR=$(ls ios | egrep -v "Podfile|Podfile.lock|build|Pods|fastlane|\.xcodeproj|\.xcworkspace" | head -n1 || true)
+          # 选取 ios 目录下第一个应用目录
+          APP_DIR=$(ls ios | egrep -v "Podfile|Podfile.lock|build|Pods|fastlane|\\.xcodeproj|\\.xcworkspace|ExportOptions\\.plist" | head -n1 || true)
           echo "Detected APP_DIR=$APP_DIR"
           if [ -z "$APP_DIR" ]; then
-            echo "No generated iOS app dir found; skipping AppDelegate injection"
-            exit 0
+            echo "ERROR: No generated iOS app dir found"
+            ls -la ios
+            exit 1
           fi
           TARGET_DIR=ios/$APP_DIR
-          # 仅当 node_modules 中存在官方 ExpoAppDelegate.swift 时才复制
           SRC=node_modules/expo-modules-core/ios/AppDelegates/ExpoAppDelegate.swift
           if [ -f "$SRC" ]; then
             echo "Copying $SRC to $TARGET_DIR/AppDelegate.swift"
-            cp "$SRC" "$TARGET_DIR/AppDelegate.swift" || true
+            cp "$SRC" "$TARGET_DIR/AppDelegate.swift"
+            # 删除可能存在的旧 AppDelegate 文件
+            rm -f "$TARGET_DIR/AppDelegate.m" "$TARGET_DIR/AppDelegate.mm" 2>/dev/null || true
           else
-            echo "ExpoAppDelegate.swift not found in node_modules; skipping"
+            echo "ERROR: ExpoAppDelegate.swift not found"
+            exit 1
           fi
 
       - name: Install CocoaPods Dependencies
         run: |
           cd ios
-          # 使用清华大学镜像源加速 pod 安装
           pod repo remove master || true
           pod repo add master https://mirrors.tuna.tsinghua.edu.cn/git/CocoaPods/Specs.git
           pod install --repo-update --verbose
@@ -79,19 +83,18 @@ jobs:
         run: |
           cd ios
           if [ ! -f Podfile.lock ]; then
-            echo "Podfile.lock not found — pod install may have failed"
+            echo "ERROR: Podfile.lock not found"
             ls -la
             exit 1
           fi
           echo "----- Podfile.lock (head) -----"
-          sed -n '1,200p' Podfile.lock || true
+          head -n 50 Podfile.lock
           echo "----- checking for required Expo native pods -----"
-          if ! grep -E "EXFileSystem|ExpoModulesCore|EXConstants|expo-file-system|expo-constants|EXUpdates" Podfile.lock >/dev/null; then
-            echo "Required Expo native pods not found in Podfile.lock"
+          if ! grep -E "EXFileSystem|ExpoModulesCore|EXConstants" Podfile.lock >/dev/null; then
+            echo "ERROR: Required Expo native pods not found"
             exit 1
-          else
-            echo "Required Expo pods present"
           fi
+          echo "✅ Required Expo pods present"
 
       - name: Clean Xcode Derived Data
         run: rm -rf ~/Library/Developer/Xcode/DerivedData/*
@@ -109,11 +112,9 @@ jobs:
         run: |
           mkdir -p build/ipa
           cd ios/build/Unraid.xcarchive/Products/Applications
-          # 将 .app 放入标准的 Payload/ 目录结构中，某些安装器（如 TrollStore）要求此结构
           rm -rf Payload || true
           mkdir -p Payload
           cp -R Unraid.app Payload/
-          # 使用 -0 参数确保文件完全不压缩，避免 iOS 解压器出现兼容性问题
           zip -0 -r ../../../../../build/ipa/Unraid-unsigned.ipa Payload
 
       - name: Upload IPA to Artifacts
@@ -130,20 +131,21 @@ jobs:
           name: iOS Build v1.0.${{ github.run_number }}
           body: |
             ## Unraid iOS App Build
-
+            
             This is an unsigned IPA for testing purposes.
-
+            
             **Version:** 1.0.${{ github.run_number }}
             **Build Date:** ${{ github.event.head_commit.timestamp }}
-
+            
             ### Installation
-
+            
             This IPA is unsigned. You need to sign it yourself or use tools like:
             - AltStore (https://altstore.io)
             - Sideloadly (https://sideloadly.io)
             - Xcode
-
+            
             ### Changes
+            
             ${{ github.event.head_commit.message }}
         env:
           GITHUB_TOKEN: ${{ secrets.GH_RELEASE_TOKEN }}
