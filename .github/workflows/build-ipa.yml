@@ -27,66 +27,50 @@ jobs:
       - name: Install Dependencies
         run: npm install
 
-      - name: Clean and Generate iOS Project
-        run: |
-          rm -rf ios
-          npx expo prebuild --platform ios --clean   # regenerated
-
-      - name: Install CocoaPods
-        run: |
-          cd ios
-          # retry pod install up to 3 times
-          for attempt in 1 2 3; do
-            echo "Attempt $attempt/3 for pod install"
-            pod repo remove master || true
-            if pod install --repo-update --verbose; then
-              echo "✅ pod install succeeded"
-              break
-            else
-              echo "⚠️ pod install failed on attempt $attempt"
-              if [ $attempt -lt 3 ]; then
-                sleep 10
-              else
-                echo "❌ pod install failed after 3 attempts"
-                exit 1
-              fi
-            fi
-          done
-
-          if [ ! -f Podfile.lock ]; then
-            echo "❌ Podfile.lock not created"
-            exit 1
-          fi
-
-      - name: Bump version (auto)
+      - name: Bump version using Run Number
         run: |
           node -e "
             const fs = require('fs');
             const data = JSON.parse(fs.readFileSync('app.json'));
             const rn = process.env.GITHUB_RUN_NUMBER;
+            
             data.expo.version = '1.0.' + rn;
             if (!data.expo.ios) data.expo.ios = {};
             data.expo.ios.buildNumber = rn.toString();
+            
             fs.writeFileSync('app.json', JSON.stringify(data, null, 2));
-            console.log('✅ Updated version to', data.expo.version);
+            console.log('✅ Updated App Version to ' + data.expo.version + ' and iOS Build Number to ' + rn);
           "
+
+      - name: Clean and Generate iOS Project
+        run: |
+          rm -rf ios
+          npx expo prebuild --platform ios --clean
+
+      - name: Install CocoaPods
+        run: |
+          cd ios
+          pod repo remove master || true
+          pod install --repo-update --verbose
+          
+          if [ ! -f Podfile.lock ]; then
+            echo "❌ Podfile.lock not created"
+            exit 1
+          fi
 
       - name: Inject ExpoAppDelegate
         run: |
           cd ios
-          PROJECT_NAME=$(ls *.xcodeproj 2>/dev/null | head -1 | sed 's/\.xcodeproj$//')
-          if [ -z "$PROJECT_NAME" ]; then
-            echo "❌ No .xcodeproj found – cannot inject ExpoAppDelegate"
-            exit 1
-          fi
-          EXPO_DELEGATE=../node_modules/expo-modules-core/ios/AppDelegates/ExpoAppDelegate.swift
-          CANDIDATES=(
-            "$PROJECT_NAME/AppDelegate.swift"
-            "$PROJECT_NAME/$PROJECT_NAME/AppDelegate.swift"
-          )
-          for path in "${CANDIDATES[@]}"; do
+          # 【安全写法】无管道符，自动获取项目名
+          for file in *.xcodeproj; do
+            PROJECT_NAME="${file%.xcodeproj}"
+            break
+          done
+          
+          EXPO_DELEGATE="../node_modules/expo-modules-core/ios/AppDelegates/ExpoAppDelegate.swift"
+          
+          for path in "$PROJECT_NAME/AppDelegate.swift" "$PROJECT_NAME/$PROJECT_NAME/AppDelegate.swift"; do
             if [ -f "$path" ]; then
-              echo "✅ Injecting ExpoAppDelegate into $path"
               cp "$EXPO_DELEGATE" "$path"
               rm -f "${path%.*}.m" "${path%.*}.mm" 2>/dev/null || true
               break
@@ -96,7 +80,12 @@ jobs:
       - name: Build iOS Archive
         run: |
           cd ios
-          PROJECT_NAME=$(ls *.xcodeproj 2>/dev/null | head -1 | sed 's/\.xcodeproj$//')
+          # 【安全写法】无管道符，自动获取项目名
+          for file in *.xcodeproj; do
+            PROJECT_NAME="${file%.xcodeproj}"
+            break
+          done
+          
           if [ -d "$PROJECT_NAME.xcworkspace" ]; then
             xcodebuild -workspace "$PROJECT_NAME.xcworkspace" -scheme "$PROJECT_NAME" -sdk iphoneos -configuration Release -archivePath build/$PROJECT_NAME.xcarchive archive CODE_SIGN_IDENTITY="" CODE_SIGNING_REQUIRED=NO CODE_SIGNING_ALLOWED=NO IPHONEOS_DEPLOYMENT_TARGET=13.0
           else
@@ -107,7 +96,11 @@ jobs:
         run: |
           mkdir -p ios/build/output
           cd ios/build/*.xcarchive/Products/Applications
-          APP_NAME=$(ls | head -1)
+          # 【安全写法】无管道符，自动获取APP文件夹名
+          for app in *.app; do
+            APP_NAME="$app"
+            break
+          done
           mkdir -p Payload
           cp -R "$APP_NAME" Payload/
           zip -0 -r ../../../../../ios/build/output/Unraid-unsigned.ipa Payload
