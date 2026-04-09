@@ -1,19 +1,18 @@
-import React, { useState, useCallback, useRef } from 'react';
+import React, { useState, useCallback, useRef, useEffect } from 'react';
 import { StyleSheet, Text, View, ScrollView, RefreshControl, TouchableOpacity, TextInput, ActivityIndicator, KeyboardAvoidingView, Platform, Alert } from 'react-native';
 import { Cpu, Database, HardDrive, Box, Activity, Monitor, AlertCircle, Wifi, Zap, Server, Key } from 'lucide-react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useFocusEffect } from '@react-navigation/native';
 
 export default function DashboardScreen({ navigation }) {
-  // 核心状态：是否已配置 Unraid 信息
-  const [isConfigured, setIsConfigured] = useState(true);
+  // 💡 状态管理：增加 isLoading 防止首屏空值冲突
+  const [isLoading, setIsLoading] = useState(true);
+  const [isConfigured, setIsConfigured] = useState(false);
   
-  // 登录表单状态
   const [inputUrl, setInputUrl] = useState('');
   const [inputToken, setInputToken] = useState('');
   const [isTesting, setIsTesting] = useState(false);
 
-  // 仪表盘状态
   const [refreshing, setRefreshing] = useState(false);
   const [serverStatus, setServerStatus] = useState('offline');
   const [stats, setStats] = useState({ cpu: 0, memory: 0 });
@@ -24,45 +23,55 @@ export default function DashboardScreen({ navigation }) {
   const prevNetwork = useRef({ rx: 0, tx: 0, time: 0 });
   const [netSpeed, setNetSpeed] = useState({ down: 0, up: 0 });
 
-  // 💡 核心检查逻辑
   const fetchServerData = async () => {
     try {
       const savedUrl = await AsyncStorage.getItem('@server_url');
       const savedToken = await AsyncStorage.getItem('@api_token');
       
-      // 如果没有钥匙，立刻显示配置表单！
       if (!savedUrl || !savedToken) { 
         setIsConfigured(false); 
+        setIsLoading(false); // 结束加载，进入登录表单
         return; 
       }
+      
       setIsConfigured(true);
 
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 10000);
+      const timeoutId = setTimeout(() => controller.abort(), 8000); // 稍微缩短超时到8秒
+      
       const response = await fetch(`${savedUrl}/api.php?token=${savedToken}&action=status`, { signal: controller.signal });
       clearTimeout(timeoutId);
 
       const data = await response.json();
       setServerStatus('online');
-      if (data.stats) setStats(data.stats);
-      if (data.gpu) setGpu(data.gpu);
-      if (data.storage) setStorage(data.storage);
-      if (data.dockers) setDockers(data.dockers);
-      if (data.vms) setVms(data.vms);
-      if (data.network) {
+      
+      // 💡 安全赋值：使用可选链或逻辑判断防止 data 为空
+      if (data?.stats) setStats(data.stats);
+      if (data?.gpu) setGpu(data.gpu);
+      if (data?.storage) setStorage(data.storage);
+      if (data?.dockers) setDockers(data.dockers);
+      if (data?.vms) setVms(data.vms);
+      
+      if (data?.network) {
         const now = Date.now();
         if (prevNetwork.current.time > 0) {
           const timeDiff = (now - prevNetwork.current.time) / 1000;
           const rxDiff = data.network.rx_bytes - prevNetwork.current.rx;
           const txDiff = data.network.tx_bytes - prevNetwork.current.tx;
           if (timeDiff > 0 && rxDiff >= 0 && txDiff >= 0) {
-            setNetSpeed({ down: (rxDiff / timeDiff / 1024).toFixed(1), up: (txDiff / timeDiff / 1024).toFixed(1) });
+            // 💡 容错计算：防止除零或异常导致闪退
+            const downSpeed = (rxDiff / timeDiff / 1024).toFixed(1);
+            const upSpeed = (txDiff / timeDiff / 1024).toFixed(1);
+            setNetSpeed({ down: downSpeed, up: upSpeed });
           }
         }
         prevNetwork.current = { rx: data.network.rx_bytes, tx: data.network.tx_bytes, time: now };
       }
     } catch (error) {
+      console.log('Fetch Error:', error);
       setServerStatus('offline');
+    } finally {
+      setIsLoading(false); // 无论如何，检查配置的流程结束了
     }
   };
 
@@ -75,20 +84,19 @@ export default function DashboardScreen({ navigation }) {
   useFocusEffect(
     useCallback(() => {
       fetchServerData();
-      const interval = setInterval(() => fetchServerData(), 2000);
+      const interval = setInterval(() => fetchServerData(), 3000); // 稍微放缓轮询频率，减少压力
       return () => clearInterval(interval);
     }, [])
   );
 
   const formatBytes = (bytes) => {
-    if (bytes === 0) return '0 B';
+    if (!bytes || bytes === 0) return '0 B';
     const k = 1024;
     const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
     const i = Math.floor(Math.log(bytes) / Math.log(k));
     return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
   };
 
-  // 💡 新增：处理登录并保存配置
   const handleSaveConfig = async () => {
     if (!inputUrl || !inputToken) {
       Alert.alert('提示', '请完整填写服务器地址和 API Token');
@@ -107,7 +115,7 @@ export default function DashboardScreen({ navigation }) {
         await AsyncStorage.setItem('@api_token', inputToken.trim());
         Alert.alert('连接成功', '已接入 Unraid 服务器！');
         setIsConfigured(true);
-        fetchServerData(); // 立刻拉取数据
+        fetchServerData();
       } else {
         Alert.alert('连接失败', '服务器无响应或 Token 错误');
       }
@@ -119,8 +127,20 @@ export default function DashboardScreen({ navigation }) {
   };
 
   // ==========================================
-  // 状态 A：未配置时，渲染登录表单
+  // 💡 分流渲染逻辑：解决闪退的核心
   // ==========================================
+
+  // 第一阶段：还在读存储
+  if (isLoading) {
+    return (
+      <View style={styles.center}>
+        <ActivityIndicator size="large" color="#3b82f6" />
+        <Text style={{ color: '#9ca3af', marginTop: 16 }}>正在连接服务器...</Text>
+      </View>
+    );
+  }
+
+  // 第二阶段：没配置，看登录页
   if (!isConfigured) {
     return (
       <KeyboardAvoidingView style={styles.center} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
@@ -162,9 +182,7 @@ export default function DashboardScreen({ navigation }) {
     );
   }
 
-  // ==========================================
-  // 状态 B：已配置时，渲染仪表盘
-  // ==========================================
+  // 第三阶段：已配置，看仪表盘
   return (
     <ScrollView 
       style={styles.container} 
@@ -181,24 +199,24 @@ export default function DashboardScreen({ navigation }) {
       <View style={styles.gridRow}>
         <View style={[styles.card, styles.gridCard, { marginRight: 8 }]}>
           <View style={styles.cardHeader}><Cpu color="#f59e0b" size={20} /><Text style={styles.cardTitle}>CPU</Text></View>
-          <Text style={styles.mainNumber}>{stats.cpu}%</Text>
+          <Text style={styles.mainNumber}>{stats?.cpu || 0}%</Text>
           <View style={styles.miniTrack}>
-            <View style={[styles.miniBar, { width: `${stats.cpu}%`, backgroundColor: stats.cpu > 80 ? '#ef4444' : '#f59e0b' }]} />
+            <View style={[styles.miniBar, { width: `${stats?.cpu || 0}%`, backgroundColor: stats?.cpu > 80 ? '#ef4444' : '#f59e0b' }]} />
           </View>
         </View>
         <View style={[styles.card, styles.gridCard, { marginLeft: 8 }]}>
           <View style={styles.cardHeader}><Zap color="#a855f7" size={20} /><Text style={styles.cardTitle}>GPU</Text></View>
-          <Text style={styles.mainNumber}>{gpu.usage}%</Text>
-          <Text style={styles.subText} numberOfLines={1}>{gpu.name}</Text>
+          <Text style={styles.mainNumber}>{gpu?.usage || 0}%</Text>
+          <Text style={styles.subText} numberOfLines={1}>{gpu?.name || 'N/A'}</Text>
         </View>
       </View>
 
       <View style={styles.gridRow}>
         <View style={[styles.card, styles.gridCard, { marginRight: 8 }]}>
           <View style={styles.cardHeader}><Database color="#10b981" size={20} /><Text style={styles.cardTitle}>内存</Text></View>
-          <Text style={styles.mainNumber}>{stats.memory}%</Text>
+          <Text style={styles.mainNumber}>{stats?.memory || 0}%</Text>
           <View style={styles.miniTrack}>
-            <View style={[styles.miniBar, { width: `${stats.memory}%`, backgroundColor: stats.memory > 80 ? '#ef4444' : '#10b981' }]} />
+            <View style={[styles.miniBar, { width: `${stats?.memory || 0}%`, backgroundColor: stats?.memory > 80 ? '#ef4444' : '#10b981' }]} />
           </View>
         </View>
         <View style={[styles.card, styles.gridCard, { marginLeft: 8 }]}>
@@ -210,24 +228,24 @@ export default function DashboardScreen({ navigation }) {
 
       <TouchableOpacity style={styles.card} onPress={() => navigation.navigate('存储详情')}>
         <View style={styles.cardHeader}><HardDrive color="#10b981" size={24} /><Text style={styles.cardTitle}>阵列存储</Text></View>
-        <Text style={styles.mainNumber}>{storage.percentage}%</Text>
-        <Text style={styles.subText}>已用 {formatBytes(storage.total_used)} / 总共 {formatBytes(storage.total_size)}</Text>
-        <View style={[styles.track, { marginTop: 12 }]}><View style={[styles.bar, { width: `${storage.percentage}%`, backgroundColor: storage.percentage > 80 ? '#ef4444' : '#10b981' }]} /></View>
+        <Text style={styles.mainNumber}>{storage?.percentage || 0}%</Text>
+        <Text style={styles.subText}>已用 {formatBytes(storage?.total_used)} / 总共 {formatBytes(storage?.total_size)}</Text>
+        <View style={[styles.track, { marginTop: 12 }]}><View style={[styles.bar, { width: `${storage?.percentage || 0}%`, backgroundColor: storage?.percentage > 80 ? '#ef4444' : '#10b981' }]} /></View>
       </TouchableOpacity>
 
       <TouchableOpacity style={styles.card} onPress={() => navigation.navigate('Docker详情')}>
         <View style={styles.cardHeader}><Box color="#3b82f6" size={24} /><Text style={styles.cardTitle}>Docker 容器</Text></View>
         <View style={styles.summaryRow}>
-          <Text style={styles.summaryText}>运行中: <Text style={{ color: '#10b981', fontWeight: 'bold' }}>{dockers.running}</Text></Text>
-          <Text style={styles.summaryText}>总计: {dockers.total}</Text>
+          <Text style={styles.summaryText}>运行中: <Text style={{ color: '#10b981', fontWeight: 'bold' }}>{dockers?.running || 0}</Text></Text>
+          <Text style={styles.summaryText}>总计: {dockers?.total || 0}</Text>
         </View>
       </TouchableOpacity>
 
       <TouchableOpacity style={styles.card} onPress={() => navigation.navigate('VM详情')}>
         <View style={styles.cardHeader}><Monitor color="#ec4899" size={24} /><Text style={styles.cardTitle}>虚拟机 (VM)</Text></View>
         <View style={styles.summaryRow}>
-          <Text style={styles.summaryText}>运行中: <Text style={{ color: '#10b981', fontWeight: 'bold' }}>{vms.running}</Text></Text>
-          <Text style={styles.summaryText}>总计: {vms.total}</Text>
+          <Text style={styles.summaryText}>运行中: <Text style={{ color: '#10b981', fontWeight: 'bold' }}>{vms?.running || 0}</Text></Text>
+          <Text style={styles.summaryText}>总计: {vms?.total || 0}</Text>
         </View>
       </TouchableOpacity>
     </ScrollView>
@@ -235,8 +253,8 @@ export default function DashboardScreen({ navigation }) {
 }
 
 const styles = StyleSheet.create({
-  center: { flex: 1, backgroundColor: '#111827', justifyContent: 'center', padding: 20 },
-  setupCard: { backgroundColor: '#1f2937', borderRadius: 16, padding: 24, elevation: 5 },
+  center: { flex: 1, backgroundColor: '#111827', justifyContent: 'center', alignItems: 'center', padding: 20 },
+  setupCard: { backgroundColor: '#1f2937', borderRadius: 16, padding: 24, width: '100%', elevation: 5 },
   setupTitle: { color: '#ffffff', fontSize: 22, fontWeight: 'bold', textAlign: 'center', marginBottom: 8 },
   setupSub: { color: '#9ca3af', fontSize: 13, textAlign: 'center', marginBottom: 24 },
   inputContainer: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#374151', borderRadius: 8, marginBottom: 16, paddingHorizontal: 12 },
