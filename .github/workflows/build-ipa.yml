@@ -27,6 +27,23 @@ jobs:
       - name: Install Dependencies
         run: npm install
 
+      # ⚠️ 关键修改：在 Prebuild 之前动态注入 run_number
+      - name: Bump version using Run Number
+        run: |
+          node -e "
+            const fs = require('fs');
+            const data = JSON.parse(fs.readFileSync('app.json'));
+            const rn = process.env.GITHUB_RUN_NUMBER;
+            
+            data.expo.version = '1.0.' + rn;
+            if (!data.expo.ios) data.expo.ios = {};
+            data.expo.ios.buildNumber = rn.toString();
+            
+            fs.writeFileSync('app.json', JSON.stringify(data, null, 2));
+            console.log('✅ Updated App Version to ' + data.expo.version + ' and iOS Build Number to ' + rn);
+          "
+
+      # 此时 Prebuild 会读取上面修改好的 app.json，将其写入原生的 Info.plist 中
       - name: Clean and Generate iOS Project
         run: |
           rm -rf ios
@@ -43,29 +60,16 @@ jobs:
             exit 1
           fi
 
-      - name: Bump version (auto)
-        run: |
-          node -e "
-            const fs = require('fs');
-            const data = JSON.parse(fs.readFileSync('app.json'));
-            const rn = process.env.GITHUB_RUN_NUMBER;
-            data.expo.version = '1.0.' + rn;
-            if (!data.expo.ios) data.expo.ios = {};
-            data.expo.ios.buildNumber = rn.toString();
-            fs.writeFileSync('app.json', JSON.stringify(data, null, 2));
-            console.log('✅ Updated version to', data.expo.version);
-          "
-
       - name: Inject ExpoAppDelegate
         run: |
           cd ios
-          PROJECT_NAME=$(ls | grep -E "\.xcodeproj$" | head -1 | sed 's/\.xcodeproj$//')
+          PROJECT_NAME=(ls|grep−E"\.xcodeproj(ls | grep -E "\.xcodeproj" | head -1 | sed 's/\.xcodeproj$//')
           EXPO_DELEGATE=../node_modules/expo-modules-core/ios/AppDelegates/ExpoAppDelegate.swift
           
-          for path in "$PROJECT_NAME/AppDelegate.swift" "$PROJECT_NAME/$PROJECT_NAME/AppDelegate.swift"; do
+          for path in "PROJECTNAME/AppDelegate.swift""PROJECT_NAME/AppDelegate.swift" "PROJECT_NAME/$PROJECT_NAME/AppDelegate.swift"; do
             if [ -f "$path" ]; then
-              cp "$EXPO_DELEGATE" "$path"
-              rm -f "${path%.*}.m" "${path%.*}.mm" 2>/dev/null || true
+              cp "EXPODELEGATE""EXPO_DELEGATE" "path"
+              rm -f "{path%.*}.m" "{path%.*}.m" "{path%.*}.mm" 2>/dev/null || true
               break
             fi
           done
@@ -73,11 +77,11 @@ jobs:
       - name: Build iOS Archive
         run: |
           cd ios
-          PROJECT_NAME=$(ls | grep -E "\.xcodeproj$" | head -1 | sed 's/\.xcodeproj$//')
+          PROJECT_NAME=(ls|grep−E"\.xcodeproj(ls | grep -E "\.xcodeproj" | head -1 | sed 's/\.xcodeproj$//')
           if [ -d "$PROJECT_NAME.xcworkspace" ]; then
-            xcodebuild -workspace "$PROJECT_NAME.xcworkspace" -scheme "$PROJECT_NAME" -sdk iphoneos -configuration Release -archivePath build/$PROJECT_NAME.xcarchive archive CODE_SIGN_IDENTITY="" CODE_SIGNING_REQUIRED=NO CODE_SIGNING_ALLOWED=NO IPHONEOS_DEPLOYMENT_TARGET=13.0
+            xcodebuild -workspace "PROJECTNAME.xcworkspace"−scheme"PROJECT_NAME.xcworkspace" -scheme "PROJECT_NAME" -sdk iphoneos -configuration Release -archivePath build/$PROJECT_NAME.xcarchive archive CODE_SIGN_IDENTITY="" CODE_SIGNING_REQUIRED=NO CODE_SIGNING_ALLOWED=NO IPHONEOS_DEPLOYMENT_TARGET=13.0
           else
-            xcodebuild -project "$PROJECT_NAME.xcodeproj" -scheme "$PROJECT_NAME" -sdk iphoneos -configuration Release -archivePath build/$PROJECT_NAME.xcarchive archive CODE_SIGN_IDENTITY="" CODE_SIGNING_REQUIRED=NO CODE_SIGNING_ALLOWED=NO IPHONEOS_DEPLOYMENT_TARGET=13.0
+            xcodebuild -project "PROJECTNAME.xcodeproj"−scheme"PROJECT_NAME.xcodeproj" -scheme "PROJECT_NAME" -sdk iphoneos -configuration Release -archivePath build/$PROJECT_NAME.xcarchive archive CODE_SIGN_IDENTITY="" CODE_SIGNING_REQUIRED=NO CODE_SIGNING_ALLOWED=NO IPHONEOS_DEPLOYMENT_TARGET=13.0
           fi
 
       - name: Create IPA
