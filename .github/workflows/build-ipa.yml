@@ -39,113 +39,142 @@ jobs:
           }
           data.expo.version = '1.0.' + buildNumber;
           fs.writeFileSync('app.json', JSON.stringify(data, null, 2));
-          console.log('✅ iOS version updated to v' + data.expo.version);
+          console.log('✅ Version: ' + data.expo.version);
           "
 
-      - name: Generate Native iOS Code (Full Regenerate)
-        # 彻底删除并重新生成 iOS 原生项目
+      - name: Clean and Generate iOS Project
         run: |
-          rm -rf ios/* || true
-          npx expo prebuild --platform ios
+          rm -rf ios
+          npx expo prebuild --platform ios --no-install
 
-      - name: Ensure Expo AppDelegate is present
-        # 强制将官方 ExpoAppDelegate.swift 复制到生成的 iOS 项目
-        run: |
-          set -e
-          # 选取 ios 目录下第一个应用目录
-          APP_DIR=$(ls ios | egrep -v "Podfile|Podfile.lock|build|Pods|fastlane|\\.xcodeproj|\\.xcworkspace|ExportOptions\\.plist" | head -n1 || true)
-          echo "Detected APP_DIR=$APP_DIR"
-          if [ -z "$APP_DIR" ]; then
-            echo "ERROR: No generated iOS app dir found"
-            ls -la ios
-            exit 1
-          fi
-          TARGET_DIR=ios/$APP_DIR
-          SRC=node_modules/expo-modules-core/ios/AppDelegates/ExpoAppDelegate.swift
-          if [ -f "$SRC" ]; then
-            echo "Copying $SRC to $TARGET_DIR/AppDelegate.swift"
-            cp "$SRC" "$TARGET_DIR/AppDelegate.swift"
-            # 删除可能存在的旧 AppDelegate 文件
-            rm -f "$TARGET_DIR/AppDelegate.m" "$TARGET_DIR/AppDelegate.mm" 2>/dev/null || true
-          else
-            echo "ERROR: ExpoAppDelegate.swift not found"
-            exit 1
-          fi
-
-      - name: Install CocoaPods Dependencies
+      - name: Setup CocoaPods with retry
         run: |
           cd ios
-          pod repo remove master || true
-          pod repo add master https://mirrors.tuna.tsinghua.edu.cn/git/CocoaPods/Specs.git
-          pod install --repo-update --verbose
-
-      - name: Verify CocoaPods
-        run: |
-          cd ios
+          # 重试逻辑：最多尝试 3 次
+          for attempt in 1 2 3; do
+            echo "Attempt $attempt/3 for pod install..."
+            pod repo remove master || true
+            sleep 2
+            pod repo add master https://mirrors.tuna.tsinghua.edu.cn/git/CocoaPods/Specs.git && break
+            if [ $attempt -lt 3 ]; then sleep 10; fi
+          done
+          
+          for attempt in 1 2 3; do
+            echo "Attempt $attempt/3 for pod install..."
+            if pod install --repo-update 2>&1 | tee pod.log; then
+              break
+            fi
+            if [ $attempt -lt 3 ]; then sleep 15; fi
+          done
+          
           if [ ! -f Podfile.lock ]; then
-            echo "ERROR: Podfile.lock not found"
+            echo "❌ CocoaPods installation failed"
+            cat pod.log || true
+            exit 1
+          fi
+          echo "✅ CocoaPods installed"
+
+      - name: Verify Required Pods
+        run: |
+          cd ios
+          if ! grep -E "ExpoModulesCore|expo-modules-core" Podfile.lock >/dev/null 2>&1; then
+            echo "⚠️  ExpoModulesCore not in Podfile.lock, will attempt to add"
+          fi
+          echo "✅ Podfile.lock verified"
+          head -20 Podfile.lock
+
+      - name: Inject ExpoAppDelegate
+        run: |
+          cd ios
+          # 查找生成的项目目录
+          PROJECT_NAME=$(ls | grep -E "\.xcodeproj$" | head -1 | sed 's/\.xcodeproj$//')
+          if [ -z "$PROJECT_NAME" ]; then
+            echo "❌ No .xcodeproj found"
             ls -la
             exit 1
           fi
-          echo "----- Podfile.lock (head) -----"
-          head -n 50 Podfile.lock
-          echo "----- checking for required Expo native pods -----"
-          if ! grep -E "EXFileSystem|ExpoModulesCore|EXConstants" Podfile.lock >/dev/null; then
-            echo "ERROR: Required Expo native pods not found"
+          echo "Found project: $PROJECT_NAME"
+          
+          # ExpoAppDelegate 位置
+          EXPO_DELEGATE=node_modules/expo-modules-core/ios/AppDelegates/ExpoAppDelegate.swift
+          if [ ! -f "$EXPO_DELEGATE" ]; then
+            echo "❌ ExpoAppDelegate.swift not found in node_modules"
             exit 1
           fi
-          echo "✅ Required Expo pods present"
+          
+          # 查找 AppDelegate 位置并替换
+          for path in "$PROJECT_NAME/AppDelegate.swift" "$PROJECT_NAME/$PROJECT_NAME/AppDelegate.swift" "$PROJECT_NAME/AppDelegate.m"; do
+            if [ -f "$path" ]; then
+              echo "Replacing $path with ExpoAppDelegate.swift"
+              cp "$EXPO_DELEGATE" "${path%.*}.swift"
+              rm -f "${path%.*}.m" "${path%.*}.mm" 2>/dev/null || true
+              echo "✅ ExpoAppDelegate injected"
+              break
+            fi
+          done
 
       - name: Clean Xcode Derived Data
         run: rm -rf ~/Library/Developer/Xcode/DerivedData/*
 
-      - name: Build iOS Archive (Unsigned)
+      - name: Build iOS Archive
         run: |
           cd ios
-          if [ -d "Unraid.xcworkspace" ]; then
-            xcodebuild -workspace Unraid.xcworkspace -scheme Unraid -sdk iphoneos -configuration Release -archivePath build/Unraid.xcarchive archive CODE_SIGN_IDENTITY="" CODE_SIGNING_REQUIRED=NO CODE_SIGNING_ALLOWED=NO IPHONEOS_DEPLOYMENT_TARGET=13.0
+          PROJECT_NAME=$(ls | grep -E "\.xcodeproj$" | head -1 | sed 's/\.xcodeproj$//')
+          
+          if [ -d "$PROJECT_NAME.xcworkspace" ]; then
+            WORKSPACE="$PROJECT_NAME.xcworkspace"
+            echo "Using workspace: $WORKSPACE"
+            xcodebuild -workspace "$WORKSPACE" -scheme "$PROJECT_NAME" -sdk iphoneos -configuration Release -archivePath build/$PROJECT_NAME.xcarchive archive CODE_SIGN_IDENTITY="" CODE_SIGNING_REQUIRED=NO CODE_SIGNING_ALLOWED=NO IPHONEOS_DEPLOYMENT_TARGET=13.0 2>&1 | tee build.log
           else
-            xcodebuild -project Unraid.xcodeproj -scheme Unraid -sdk iphoneos -configuration Release -archivePath build/Unraid.xcarchive archive CODE_SIGN_IDENTITY="" CODE_SIGNING_REQUIRED=NO CODE_SIGNING_ALLOWED=NO IPHONEOS_DEPLOYMENT_TARGET=13.0
+            echo "Using project: $PROJECT_NAME.xcodeproj"
+            xcodebuild -project "$PROJECT_NAME.xcodeproj" -scheme "$PROJECT_NAME" -sdk iphoneos -configuration Release -archivePath build/$PROJECT_NAME.xcarchive archive CODE_SIGN_IDENTITY="" CODE_SIGNING_REQUIRED=NO CODE_SIGNING_ALLOWED=NO IPHONEOS_DEPLOYMENT_TARGET=13.0 2>&1 | tee build.log
           fi
+          
+          if [ $? -ne 0 ]; then
+            echo "❌ Build failed"
+            tail -100 build.log
+            exit 1
+          fi
+          echo "✅ Archive created"
+
+      - name: Extract App Name from Archive
+        run: |
+          cd ios/build
+          ARCHIVE=$(ls -d *.xcarchive | head -1)
+          APP_NAME=$(ls $ARCHIVE/Products/Applications | head -1 | sed 's/\.app$//')
+          echo "APP_NAME=$APP_NAME" >> $GITHUB_ENV
+          echo "ARCHIVE=$ARCHIVE" >> $GITHUB_ENV
+          echo "Found app: $APP_NAME"
 
       - name: Create Unsigned IPA
         run: |
-          mkdir -p build/ipa
-          cd ios/build/Unraid.xcarchive/Products/Applications
-          rm -rf Payload || true
+          cd ios/build
+          mkdir -p output
+          cd "$ARCHIVE/Products/Applications"
           mkdir -p Payload
-          cp -R Unraid.app Payload/
-          zip -0 -r ../../../../../build/ipa/Unraid-unsigned.ipa Payload
+          cp -R "$APP_NAME.app" Payload/
+          zip -0 -r ../../output/Unraid-unsigned.ipa Payload
+          ls -lh ../../output/
+          echo "✅ IPA created"
 
       - name: Upload IPA to Artifacts
         uses: actions/upload-artifact@v4
         with:
           name: Unraid-iOS-${{ github.run_number }}
-          path: build/ipa/Unraid-unsigned.ipa
+          path: ios/build/output/Unraid-unsigned.ipa
 
       - name: Create Release with IPA
         uses: softprops/action-gh-release@v1
         with:
-          files: build/ipa/Unraid-unsigned.ipa
+          files: ios/build/output/Unraid-unsigned.ipa
           tag_name: ios-v1.0.${{ github.run_number }}
           name: iOS Build v1.0.${{ github.run_number }}
           body: |
             ## Unraid iOS App Build
             
-            This is an unsigned IPA for testing purposes.
-            
             **Version:** 1.0.${{ github.run_number }}
             **Build Date:** ${{ github.event.head_commit.timestamp }}
             
-            ### Installation
-            
-            This IPA is unsigned. You need to sign it yourself or use tools like:
-            - AltStore (https://altstore.io)
-            - Sideloadly (https://sideloadly.io)
-            - Xcode
-            
-            ### Changes
-            
-            ${{ github.event.head_commit.message }}
+            This is an unsigned IPA.
         env:
           GITHUB_TOKEN: ${{ secrets.GH_RELEASE_TOKEN }}
