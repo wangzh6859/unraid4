@@ -58,25 +58,6 @@ jobs:
             exit 1
           fi
 
-      - name: Inject ExpoAppDelegate
-        run: |
-          cd ios
-          # 【安全写法】无管道符，自动获取项目名
-          for file in *.xcodeproj; do
-            PROJECT_NAME="${file%.xcodeproj}"
-            break
-          done
-          
-          EXPO_DELEGATE="../node_modules/expo-modules-core/ios/AppDelegates/ExpoAppDelegate.swift"
-          
-          for path in "$PROJECT_NAME/AppDelegate.swift" "$PROJECT_NAME/$PROJECT_NAME/AppDelegate.swift"; do
-            if [ -f "$path" ]; then
-              cp "$EXPO_DELEGATE" "$path"
-              rm -f "${path%.*}.m" "${path%.*}.mm" 2>/dev/null || true
-              break
-            fi
-          done
-
       - name: Build iOS Archive
         run: |
           cd ios
