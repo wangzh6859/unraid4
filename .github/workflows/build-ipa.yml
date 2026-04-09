@@ -27,32 +27,15 @@ jobs:
       - name: Install Dependencies
         run: npm install
 
-      # ⚠️ 关键修改：在 Prebuild 之前动态注入 run_number
-      - name: Bump version using Run Number
-        run: |
-          node -e "
-            const fs = require('fs');
-            const data = JSON.parse(fs.readFileSync('app.json'));
-            const rn = process.env.GITHUB_RUN_NUMBER;
-            
-            data.expo.version = '1.0.' + rn;
-            if (!data.expo.ios) data.expo.ios = {};
-            data.expo.ios.buildNumber = rn.toString();
-            
-            fs.writeFileSync('app.json', JSON.stringify(data, null, 2));
-            console.log('✅ Updated App Version to ' + data.expo.version + ' and iOS Build Number to ' + rn);
-          "
-
-      # 此时 Prebuild 会读取上面修改好的 app.json，将其写入原生的 Info.plist 中
       - name: Clean and Generate iOS Project
         run: |
           rm -rf ios
-          npx expo prebuild --platform ios --clean
+          npx expo prebuild --platform ios --clean   # regenerated
 
       - name: Install CocoaPods
         run: |
           cd ios
-          # 重试 pod install（最多 3 次）
+          # retry pod install up to 3 times
           for attempt in 1 2 3; do
             echo "Attempt $attempt/3 for pod install"
             pod repo remove master || true
@@ -62,7 +45,6 @@ jobs:
             else
               echo "⚠️ pod install failed on attempt $attempt"
               if [ $attempt -lt 3 ]; then
-                echo "Retrying in 10 seconds..."
                 sleep 10
               else
                 echo "❌ pod install failed after 3 attempts"
@@ -70,22 +52,43 @@ jobs:
               fi
             fi
           done
-          
+
           if [ ! -f Podfile.lock ]; then
             echo "❌ Podfile.lock not created"
             exit 1
           fi
 
+      - name: Bump version (auto)
+        run: |
+          node -e "
+            const fs = require('fs');
+            const data = JSON.parse(fs.readFileSync('app.json'));
+            const rn = process.env.GITHUB_RUN_NUMBER;
+            data.expo.version = '1.0.' + rn;
+            if (!data.expo.ios) data.expo.ios = {};
+            data.expo.ios.buildNumber = rn.toString();
+            fs.writeFileSync('app.json', JSON.stringify(data, null, 2));
+            console.log('✅ Updated version to', data.expo.version);
+          "
+
       - name: Inject ExpoAppDelegate
         run: |
           cd ios
-          PROJECT_NAME=(ls|grep−E"\.xcodeproj(ls | grep -E "\.xcodeproj" | head -1 | sed 's/\.xcodeproj$//')
+          PROJECT_NAME=$(ls *.xcodeproj 2>/dev/null | head -1 | sed 's/\.xcodeproj$//')
+          if [ -z "$PROJECT_NAME" ]; then
+            echo "❌ No .xcodeproj found – cannot inject ExpoAppDelegate"
+            exit 1
+          fi
           EXPO_DELEGATE=../node_modules/expo-modules-core/ios/AppDelegates/ExpoAppDelegate.swift
-          
-          for path in "PROJECTNAME/AppDelegate.swift""PROJECT_NAME/AppDelegate.swift" "PROJECT_NAME/$PROJECT_NAME/AppDelegate.swift"; do
+          CANDIDATES=(
+            "$PROJECT_NAME/AppDelegate.swift"
+            "$PROJECT_NAME/$PROJECT_NAME/AppDelegate.swift"
+          )
+          for path in "${CANDIDATES[@]}"; do
             if [ -f "$path" ]; then
-              cp "EXPODELEGATE""EXPO_DELEGATE" "path"
-              rm -f "{path%.*}.m" "{path%.*}.m" "{path%.*}.mm" 2>/dev/null || true
+              echo "✅ Injecting ExpoAppDelegate into $path"
+              cp "$EXPO_DELEGATE" "$path"
+              rm -f "${path%.*}.m" "${path%.*}.mm" 2>/dev/null || true
               break
             fi
           done
@@ -93,11 +96,11 @@ jobs:
       - name: Build iOS Archive
         run: |
           cd ios
-          PROJECT_NAME=(ls|grep−E"\.xcodeproj(ls | grep -E "\.xcodeproj" | head -1 | sed 's/\.xcodeproj$//')
+          PROJECT_NAME=$(ls *.xcodeproj 2>/dev/null | head -1 | sed 's/\.xcodeproj$//')
           if [ -d "$PROJECT_NAME.xcworkspace" ]; then
-            xcodebuild -workspace "PROJECTNAME.xcworkspace"−scheme"PROJECT_NAME.xcworkspace" -scheme "PROJECT_NAME" -sdk iphoneos -configuration Release -archivePath build/$PROJECT_NAME.xcarchive archive CODE_SIGN_IDENTITY="" CODE_SIGNING_REQUIRED=NO CODE_SIGNING_ALLOWED=NO IPHONEOS_DEPLOYMENT_TARGET=13.0
+            xcodebuild -workspace "$PROJECT_NAME.xcworkspace" -scheme "$PROJECT_NAME" -sdk iphoneos -configuration Release -archivePath build/$PROJECT_NAME.xcarchive archive CODE_SIGN_IDENTITY="" CODE_SIGNING_REQUIRED=NO CODE_SIGNING_ALLOWED=NO IPHONEOS_DEPLOYMENT_TARGET=13.0
           else
-            xcodebuild -project "PROJECTNAME.xcodeproj"−scheme"PROJECT_NAME.xcodeproj" -scheme "PROJECT_NAME" -sdk iphoneos -configuration Release -archivePath build/$PROJECT_NAME.xcarchive archive CODE_SIGN_IDENTITY="" CODE_SIGNING_REQUIRED=NO CODE_SIGNING_ALLOWED=NO IPHONEOS_DEPLOYMENT_TARGET=13.0
+            xcodebuild -project "$PROJECT_NAME.xcodeproj" -scheme "$PROJECT_NAME" -sdk iphoneos -configuration Release -archivePath build/$PROJECT_NAME.xcarchive archive CODE_SIGN_IDENTITY="" CODE_SIGNING_REQUIRED=NO CODE_SIGNING_ALLOWED=NO IPHONEOS_DEPLOYMENT_TARGET=13.0
           fi
 
       - name: Create IPA
