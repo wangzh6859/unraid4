@@ -52,8 +52,24 @@ jobs:
       - name: Install CocoaPods
         run: |
           cd ios
-          pod repo remove master || true
-          pod install --repo-update --verbose
+          # 重试 pod install（最多 3 次）
+          for attempt in 1 2 3; do
+            echo "Attempt $attempt/3 for pod install"
+            pod repo remove master || true
+            if pod install --repo-update --verbose; then
+              echo "✅ pod install succeeded"
+              break
+            else
+              echo "⚠️ pod install failed on attempt $attempt"
+              if [ $attempt -lt 3 ]; then
+                echo "Retrying in 10 seconds..."
+                sleep 10
+              else
+                echo "❌ pod install failed after 3 attempts"
+                exit 1
+              fi
+            fi
+          done
           
           if [ ! -f Podfile.lock ]; then
             echo "❌ Podfile.lock not created"
