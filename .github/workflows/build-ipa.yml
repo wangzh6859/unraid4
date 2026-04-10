@@ -33,11 +33,16 @@ jobs:
       - name: Build iOS Archive
         run: |
           cd ios
-          xcodebuild -workspace unraidmobilemanager.xcworkspace \
-            -scheme unraidmobilemanager \
+          # 自动寻找生成的 .xcworkspace 文件并提取 Scheme 名字
+          WORKSPACE=$(find . -maxdepth 1 -name "*.xcworkspace" | head -n 1)
+          SCHEME=$(basename "$WORKSPACE" .xcworkspace)
+          echo "自动检测到工作区: $WORKSPACE, Scheme: $SCHEME"
+          
+          xcodebuild -workspace "$WORKSPACE" \
+            -scheme "$SCHEME" \
             -configuration Release \
             -sdk iphoneos \
-            -archivePath $PWD/build/unraidmobilemanager.xcarchive \
+            -archivePath $PWD/build/app.xcarchive \
             clean archive \
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
@@ -48,7 +53,9 @@ jobs:
         run: |
           cd ios
           mkdir -p Payload
-          cp -R build/unraidmobilemanager.xcarchive/Products/Applications/unraidmobilemanager.app Payload/
+          # 自动寻找生成的 .app 文件，不写死名字
+          APP_PATH=$(find build/app.xcarchive/Products/Applications -name "*.app" | head -n 1)
+          cp -R "$APP_PATH" Payload/
           zip -qr Unraid-unsigned.ipa Payload
 
       - name: Upload Artifact
