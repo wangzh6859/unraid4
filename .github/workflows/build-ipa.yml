@@ -1,96 +1,58 @@
-name: Build iOS IPA
+name: build
 
 on:
   push:
-    branches: [ main ]
+    branches:
+      - main
   workflow_dispatch:
 
 jobs:
   build:
     runs-on: macos-latest
-    timeout-minutes: 60
 
     steps:
-      - name: Checkout Repository
-        uses: actions/checkout@v3
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
       - name: Setup Node.js
-        uses: actions/setup-node@v3
+        uses: actions/setup-node@v4
         with:
-          node-version: 18
+          node-version: '20'
 
-      - name: Setup Xcode
-        uses: maxim-lobanov/setup-xcode@v1
-        with:
-          xcode-version: '16.4'
+      - name: Install dependencies
+        run: npm install --legacy-peer-deps
 
-      - name: Install Dependencies
-        run: npm install
-
-      - name: Bump version using Run Number
-        run: |
-          node -e "
-            const fs = require('fs');
-            const data = JSON.parse(fs.readFileSync('app.json'));
-            const rn = process.env.GITHUB_RUN_NUMBER;
-            
-            data.expo.version = '1.0.' + rn;
-            if (!data.expo.ios) data.expo.ios = {};
-            data.expo.ios.buildNumber = rn.toString();
-            
-            fs.writeFileSync('app.json', JSON.stringify(data, null, 2));
-            console.log('✅ Updated App Version to ' + data.expo.version + ' and iOS Build Number to ' + rn);
-          "
-
-      - name: Clean and Generate iOS Project
-        run: |
-          rm -rf ios
-          npx expo prebuild --platform ios --clean
+      - name: Prebuild iOS native code
+        run: npx expo prebuild --platform ios --clean
 
       - name: Install CocoaPods
         run: |
           cd ios
-          pod repo remove master || true
-          pod install --repo-update --verbose
-          
-          if [ ! -f Podfile.lock ]; then
-            echo "❌ Podfile.lock not created"
-            exit 1
-          fi
+          pod install
 
       - name: Build iOS Archive
         run: |
           cd ios
-          # 【安全写法】无管道符，自动获取项目名
-          for file in *.xcodeproj; do
-            PROJECT_NAME="${file%.xcodeproj}"
-            break
-          done
-          
-          if [ -d "$PROJECT_NAME.xcworkspace" ]; then
-            xcodebuild -workspace "$PROJECT_NAME.xcworkspace" -scheme "$PROJECT_NAME" -sdk iphoneos -configuration Release -archivePath build/$PROJECT_NAME.xcarchive archive CODE_SIGN_IDENTITY="" CODE_SIGNING_REQUIRED=NO CODE_SIGNING_ALLOWED=NO IPHONEOS_DEPLOYMENT_TARGET=13.0
-          else
-            xcodebuild -project "$PROJECT_NAME.xcodeproj" -scheme "$PROJECT_NAME" -sdk iphoneos -configuration Release -archivePath build/$PROJECT_NAME.xcarchive archive CODE_SIGN_IDENTITY="" CODE_SIGNING_REQUIRED=NO CODE_SIGNING_ALLOWED=NO IPHONEOS_DEPLOYMENT_TARGET=13.0
-          fi
+          xcodebuild -workspace unraidmobilemanager.xcworkspace \
+            -scheme unraidmobilemanager \
+            -configuration Release \
+            -sdk iphoneos \
+            -archivePath $PWD/build/unraidmobilemanager.xcarchive \
+            clean archive \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            COMPILER_INDEX_STORE_ENABLE=NO
 
-      - name: Create IPA
+      - name: Create IPA (Unsigned for TrollStore)
         run: |
-          mkdir -p ios/build/output
-          cd ios/build/*.xcarchive/Products/Applications
-          # 【安全写法】无管道符，自动获取APP文件夹名
-          for app in *.app; do
-            APP_NAME="$app"
-            break
-          done
+          cd ios
           mkdir -p Payload
-          cp -R "$APP_NAME" Payload/
-          zip -0 -r ../../../../../ios/build/output/Unraid-unsigned.ipa Payload
+          cp -R build/unraidmobilemanager.xcarchive/Products/Applications/unraidmobilemanager.app Payload/
+          zip -qr Unraid-unsigned.ipa Payload
 
-      - name: Upload to Release
-        uses: softprops/action-gh-release@v1
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
         with:
-          files: ios/build/output/Unraid-unsigned.ipa
-          tag_name: ios-v1.0.${{ github.run_number }}
-          name: iOS Build v1.0.${{ github.run_number }}
-        env:
-          GITHUB_TOKEN: ${{ secrets.GH_RELEASE_TOKEN }}
+          name: Unraid-unsigned.ipa
+          path: ios/Unraid-unsigned.ipa
